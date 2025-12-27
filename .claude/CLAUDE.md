@@ -12,6 +12,7 @@ hub-tui is a terminal-based client for interacting with hub-core, the backend AP
 - JSON config at `~/.config/hub-tui/config.json`
 
 ## Key Patterns & Conventions
+- **Governing design doc:** `[../hub-core/docs/Design.md](../hub-core/docs/Design.md)`
 - **Keyboard-only** — no mouse support
 - **Client only** — no local state beyond config and cache; hub-core is source of truth
 - **Command triggers:** `@assistant` (context switch), `#workflow` (run), `/command` (system)

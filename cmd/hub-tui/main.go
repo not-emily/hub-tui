@@ -24,9 +24,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create and run the app
+	// Create the app model
 	model := app.New(cfg)
+
+	// Create the program
 	p := tea.NewProgram(model, tea.WithAltScreen())
+
+	// Set program reference for streaming (via a startup command)
+	go func() {
+		// Small delay to ensure program is running
+		p.Send(app.SetProgramMsg{Program: p})
+	}()
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running app: %v\n", err)

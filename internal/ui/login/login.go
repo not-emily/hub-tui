@@ -319,18 +319,15 @@ func (m Model) View() string {
 
 	form := formStyle.Render(b.String())
 
-	// Ctrl+C hint below the form (not joined to avoid padding issues)
-	// Explicitly set Background to match main background for "transparent" effect
+	// Ctrl+C hint below the form
 	var quitHint string
 	if m.ctrlCPressed {
 		quitHint = lipgloss.NewStyle().
 			Foreground(theme.Warning).
-			Background(theme.Background).
 			Render("Ctrl+C again to quit")
 	} else {
 		quitHint = lipgloss.NewStyle().
 			Foreground(theme.TextSecondary).
-			Background(theme.Background).
 			Italic(true).
 			Render("Press Ctrl+C twice to quit")
 	}
@@ -344,7 +341,6 @@ func (m Model) View() string {
 		lipgloss.Center,
 		lipgloss.Center,
 		content,
-		lipgloss.WithWhitespaceBackground(theme.Background),
 	)
 }
 

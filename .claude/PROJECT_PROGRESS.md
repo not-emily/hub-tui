@@ -2,20 +2,19 @@
 
 ## Plan Files
 Roadmap: [plan.md](../docs/plan/plan.md)
-Current Phase: [phase-3.md](../docs/plan/phases/phase-3.md)
+Current Phase: [phase-6-1.md](../docs/plan/phases/phase-6-1.md)
 Latest Weekly Report: None
 
 Last Updated: 2025-12-26
 
 ## Current Focus
-Phase 3: Chat Interface - Messages, streaming, keyboard nav
+Phase 6.1: Modal Framework - Help, settings modals
 
 ## Active Tasks
-- [NEXT] Phase 3: Chat Interface
-  - ⏭ Create chat view with message list
-  - ⏭ Build input component with multi-line support
-  - ⏭ Implement streaming response display
-  - ⏭ Add keyboard navigation (scroll, submit)
+- [NEXT] Phase 6.1: Modal Framework
+  - ⏭ Create modal container/manager component
+  - ⏭ Implement /help modal
+  - ⏭ Implement /settings modal
 
 ## Open Questions/Blockers
 None
@@ -38,6 +37,42 @@ None
   - Created status bar component (connected/disconnected)
   - Integrated login flow into app startup
   - Health check on startup verifies connection
+- UI styling fixes
+  - Fixed gray bar artifacts using WithWhitespaceBackground in Place()
+  - Established pattern: explicit Background(theme.Background) on text elements
+  - Avoid JoinVertical with centering; use string concatenation instead
+  - Added dynamic Ctrl+C hint to login page
+- Phase 3: Chat Interface
+  - Created chat view with scrollable message list
+  - Built input component with multi-line support (Ctrl+J for newline)
+  - Implemented /ask endpoint with SSE streaming
+  - Added streaming response display with ▌ indicator
+  - Message styling differentiates user vs hub
+  - Keyboard navigation: Up/Down scroll, PgUp/PgDn for faster scroll
+  - Auto-scroll to bottom on new messages
+  - Cancel streaming with Ctrl+C
+- Phase 4: Commands & Autocomplete
+  - Created input parser for @, #, / prefix detection
+  - Implemented slash commands: /exit, /clear, /help, /refresh
+  - Added API client endpoints for assistants, workflows, modules
+  - Built cache system with startup fetch and /refresh support
+  - Implemented tab autocomplete with popup menu
+  - Arrow key navigation and Enter to complete
+- Phase 5: Assistant Context
+  - Updated SSE parser to handle route/chunk/done events
+  - Added RouteMsg to capture routing info from hub-core
+  - Track current context (type, target) in app model
+  - Status bar shows @assistant indicator when in context
+  - Colored border around chat when in assistant mode
+- Phase 5 Enhancements (UI polish & routing)
+  - Markdown rendering for hub responses using glamour with custom zero-margin style
+  - Changed message indicators from "You:"/"Hub:" to "›"/"●" with colors
+  - Hub indicator changed from green to white for cleaner look
+  - Sticky target routing: messages without @ prefix go to current assistant
+  - Added /hub slash command to return to main hub context
+  - Input area shows colored top/bottom lines when in assistant context
+  - Fixed non-streaming response handling (utility, module, workflow, unknown route types now display correctly)
+  - AssistantChat client method for direct /assistants/{name}/chat endpoint
 
 ## Next Session
-Start Phase 3: Chat Interface
+Start Phase 6.1: Modal Framework
