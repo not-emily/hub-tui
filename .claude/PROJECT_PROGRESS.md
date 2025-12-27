@@ -2,19 +2,20 @@
 
 ## Plan Files
 Roadmap: [plan.md](../docs/plan/plan.md)
-Current Phase: [phase-6-1.md](../docs/plan/phases/phase-6-1.md)
+Current Phase: [phase-6-2.md](../docs/plan/phases/phase-6-2.md)
 Latest Weekly Report: None
 
-Last Updated: 2025-12-26
+Last Updated: 2025-12-27
 
 ## Current Focus
-Phase 6.1: Modal Framework - Help, settings modals
+Phase 6.2: Resource Modals - Modules, integrations, workflows, tasks modals
 
 ## Active Tasks
-- [NEXT] Phase 6.1: Modal Framework
-  - ⏭ Create modal container/manager component
-  - ⏭ Implement /help modal
-  - ⏭ Implement /settings modal
+- [NEXT] Phase 6.2: Resource Modals
+  - ⏭ Implement /modules modal
+  - ⏭ Implement /integrations modal
+  - ⏭ Implement /workflows modal
+  - ⏭ Implement /tasks modal
 
 ## Open Questions/Blockers
 None
@@ -73,6 +74,13 @@ None
   - Input area shows colored top/bottom lines when in assistant context
   - Fixed non-streaming response handling (utility, module, workflow, unknown route types now display correctly)
   - AssistantChat client method for direct /assistants/{name}/chat endpoint
+- Phase 6.1: Modal Framework
+  - Created modal framework (modal.go) with overlay rendering
+  - Built reusable list component with j/k navigation
+  - Implemented /help modal with commands and keyboard shortcuts
+  - Implemented /settings modal displaying config and connection status
+  - Integrated modals into app.go with keyboard routing
+  - Esc to close modals, keys don't leak to chat when modal open
 
 ## Next Session
-Start Phase 6.1: Modal Framework
+Start Phase 6.2: Resource Modals

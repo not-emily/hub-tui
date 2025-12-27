@@ -11,6 +11,7 @@ import (
 	"github.com/pxp/hub-tui/internal/config"
 	"github.com/pxp/hub-tui/internal/ui/chat"
 	"github.com/pxp/hub-tui/internal/ui/login"
+	"github.com/pxp/hub-tui/internal/ui/modal"
 	"github.com/pxp/hub-tui/internal/ui/status"
 )
 
@@ -56,6 +57,7 @@ type Model struct {
 	login     login.Model
 	chat      chat.Model
 	statusBar status.Model
+	modal     modal.State
 }
 
 // New creates a new app model with the given config.
@@ -67,6 +69,7 @@ func New(cfg *config.Config) Model {
 		config:    cfg,
 		chat:      chat.New(),
 		statusBar: status.New(),
+		modal:     modal.NewState(),
 	}
 
 	if needsLogin {
@@ -107,6 +110,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.login.SetSize(msg.Width, msg.Height)
 		m.statusBar.SetWidth(msg.Width)
+		m.modal.SetWidth(msg.Width)
 		// Chat gets height minus status bar
 		m.chat.SetSize(msg.Width, msg.Height-1)
 		return m, nil
@@ -138,6 +142,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ctrlCPressed = false
 		m.login.SetCtrlCPressed(false)
 		m.statusBar.SetCtrlCPressed(false)
+
+		// Route to modal if open
+		if m.modal.IsOpen() {
+			handled, cmd := m.modal.Update(msg)
+			if handled {
+				return m, cmd
+			}
+		}
 
 		// Route to current state handler
 		switch m.state {
@@ -322,15 +334,17 @@ func (m Model) handleCommand(cmd *chat.Command) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "help":
-		m.chat.AddSystemMessage(helpText)
-		return m, nil
+		return m, m.modal.Open(modal.NewHelpModal())
 
 	case "refresh":
 		m.chat.AddSystemMessage("Refreshing cache...")
 		return m, m.doRefreshCache()
 
-	case "modules", "integrations", "workflows", "tasks", "settings":
-		// These will open modals in Phase 6
+	case "settings":
+		return m, m.modal.Open(modal.NewSettingsModal(m.config, m.statusBar.IsConnected()))
+
+	case "modules", "integrations", "workflows", "tasks":
+		// These will open modals in Phase 6.2
 		m.chat.AddSystemMessage("/" + cmd.Name + " will be available in a future update.")
 		return m, nil
 
@@ -341,29 +355,6 @@ func (m Model) handleCommand(cmd *chat.Command) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 }
-
-const helpText = `hub-tui Commands:
-
-  @{assistant}  Switch to an assistant context
-  #{workflow}   Trigger a workflow
-
-  /hub          Return to main hub context
-  /modules      Manage modules
-  /integrations Configure integrations
-  /workflows    Browse workflows
-  /tasks        View background tasks
-  /settings     Open settings
-  /help         Show this help
-  /clear        Clear chat
-  /refresh      Refresh cached data
-  /exit         Exit hub-tui
-
-Keyboard:
-  Enter         Send message
-  Ctrl+J        New line
-  Tab           Autocomplete
-  Ctrl+C        Exit (press twice)
-  Esc           Cancel/close`
 
 func (m Model) handleLoginResult(msg LoginResultMsg) (tea.Model, tea.Cmd) {
 	if !msg.Success {
@@ -562,12 +553,39 @@ func (m Model) View() string {
 }
 
 func (m Model) renderMain() string {
-	// Chat view
-	chatView := m.chat.View()
-
 	// Status bar at bottom
 	statusBar := m.statusBar.View()
 
+	// If modal is open, show: messages → modal → input → status bar
+	if m.modal.IsOpen() {
+		modalView := m.modal.View()
+		modalHeight := lipgloss.Height(modalView)
+
+		inputView := m.chat.ViewInputOnly()
+		inputHeight := lipgloss.Height(inputView)
+		statusHeight := lipgloss.Height(statusBar)
+
+		// Calculate remaining height for messages
+		// The -2 accounts for: chat's internal -1 plus 1 line spacer above modal
+		messagesHeight := m.height - modalHeight - inputHeight - statusHeight - 2
+		if messagesHeight < 0 {
+			messagesHeight = 0
+		}
+
+		messagesView := m.chat.ViewMessagesOnly(messagesHeight)
+
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			messagesView,
+			"", // Spacer between messages and modal
+			modalView,
+			inputView,
+			statusBar,
+		)
+	}
+
+	// Normal view: chat + status bar
+	chatView := m.chat.View()
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		chatView,

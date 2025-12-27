@@ -131,6 +131,11 @@ func repeatSpace(n int) string {
 	return string(s)
 }
 
+// IsConnected returns true if the status is connected.
+func (m Model) IsConnected() bool {
+	return m.state == StateConnected
+}
+
 // extractHost extracts the host:port from a URL.
 func extractHost(rawURL string) string {
 	if rawURL == "" {

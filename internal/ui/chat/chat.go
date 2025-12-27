@@ -262,7 +262,30 @@ func (m Model) messagesHeight() int {
 
 // View renders the chat view.
 func (m Model) View() string {
-	messagesHeight := m.messagesHeight()
+	return m.ViewWithHeight(m.height)
+}
+
+// ViewMessagesOnly renders just the messages area (no input).
+func (m Model) ViewMessagesOnly(height int) string {
+	return m.renderMessages(height)
+}
+
+// ViewInputOnly renders just the input area.
+func (m Model) ViewInputOnly() string {
+	inputView := m.input.View()
+	if m.inContext {
+		lineStyle := lipgloss.NewStyle().Foreground(theme.Accent)
+		line := lineStyle.Render(strings.Repeat("─", m.width))
+		inputView = "\n" + line + "\n" + inputView + "\n" + line
+	}
+	return inputView
+}
+
+// ViewWithHeight renders the chat view with a specific height.
+func (m Model) ViewWithHeight(height int) string {
+	// Calculate messages height based on provided height
+	inputHeight := strings.Count(m.input.View(), "\n") + 1
+	messagesHeight := height - inputHeight - 1
 
 	// Account for autocomplete menu height
 	autocompleteView := m.autocomplete.View()
