@@ -32,7 +32,12 @@ func (m *SettingsModal) Init() tea.Cmd {
 
 // Update handles input.
 func (m *SettingsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
-	// Settings is read-only, no updates needed
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "esc" {
+			return nil, nil // Close modal
+		}
+	}
 	return m, nil
 }
 

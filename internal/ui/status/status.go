@@ -1,6 +1,7 @@
 package status
 
 import (
+	"fmt"
 	"net/url"
 
 	"github.com/charmbracelet/lipgloss"
@@ -25,6 +26,8 @@ type Model struct {
 	ctrlCPressed bool
 	contextType  string // "hub", "assistant", etc.
 	contextName  string // Name of assistant/workflow
+	runningCount int    // Number of running tasks
+	failedCount  int    // Number of failed tasks
 }
 
 // New creates a new status bar model.
@@ -60,6 +63,12 @@ func (m *Model) SetContext(contextType, contextName string) {
 	m.contextName = contextName
 }
 
+// SetTaskCounts sets the running and failed task counts.
+func (m *Model) SetTaskCounts(running, failed int) {
+	m.runningCount = running
+	m.failedCount = failed
+}
+
 // View renders the status bar.
 func (m Model) View() string {
 	var statusText string
@@ -93,6 +102,9 @@ func (m Model) View() string {
 		leftContent += "  " + contextStyle.Render("@"+m.contextName)
 	}
 
+	// Build task indicator
+	taskIndicator := m.taskIndicator()
+
 	// Right side hint
 	var rightContent string
 	if m.ctrlCPressed {
@@ -105,19 +117,34 @@ func (m Model) View() string {
 			Render("Ctrl+C to quit")
 	}
 
-	// Calculate padding between left and right
-	padding := m.width - lipgloss.Width(leftContent) - lipgloss.Width(rightContent) - 2
+	// Calculate content widths
+	leftWidth := lipgloss.Width(leftContent)
+	taskWidth := lipgloss.Width(taskIndicator)
+	rightWidth := lipgloss.Width(rightContent)
+
+	// Calculate padding between left and task indicator
+	totalContentWidth := leftWidth + taskWidth + rightWidth + 2 // +2 for padding
+	if taskWidth > 0 {
+		totalContentWidth += 2 // extra spacing around task indicator
+	}
+	padding := m.width - totalContentWidth
 	if padding < 1 {
 		padding = 1
 	}
-	spacer := repeatSpace(padding)
 
 	// Build the full status bar
 	barStyle := lipgloss.NewStyle().
 		Width(m.width).
 		Padding(0, 1)
 
-	return barStyle.Render(leftContent + spacer + rightContent)
+	if taskWidth > 0 {
+		// Split padding: some before task indicator, rest after
+		leftPadding := padding / 2
+		rightPadding := padding - leftPadding
+		return barStyle.Render(leftContent + repeatSpace(leftPadding) + taskIndicator + repeatSpace(rightPadding) + rightContent)
+	}
+
+	return barStyle.Render(leftContent + repeatSpace(padding) + rightContent)
 }
 
 func repeatSpace(n int) string {
@@ -129,6 +156,36 @@ func repeatSpace(n int) string {
 		s[i] = ' '
 	}
 	return string(s)
+}
+
+// taskIndicator returns the task count display string.
+func (m Model) taskIndicator() string {
+	if m.runningCount == 0 && m.failedCount == 0 {
+		return ""
+	}
+
+	var parts []string
+
+	if m.runningCount > 0 {
+		runningStyle := lipgloss.NewStyle().
+			Foreground(theme.Accent)
+		parts = append(parts, runningStyle.Render(fmt.Sprintf("%d running", m.runningCount)))
+	}
+
+	if m.failedCount > 0 {
+		failedStyle := lipgloss.NewStyle().
+			Foreground(theme.Error)
+		parts = append(parts, failedStyle.Render(fmt.Sprintf("%d failed", m.failedCount)))
+	}
+
+	if len(parts) == 1 {
+		return parts[0]
+	}
+
+	separator := lipgloss.NewStyle().
+		Foreground(theme.TextSecondary).
+		Render(" · ")
+	return parts[0] + separator + parts[1]
 }
 
 // IsConnected returns true if the status is connected.

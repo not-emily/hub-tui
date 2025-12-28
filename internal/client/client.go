@@ -89,6 +89,14 @@ func (e *APIError) Error() string {
 	return e.Message
 }
 
+// IsAuthError returns true if the error is an authentication error (401).
+func IsAuthError(err error) bool {
+	if apiErr, ok := err.(*APIError); ok {
+		return apiErr.StatusCode == http.StatusUnauthorized
+	}
+	return false
+}
+
 // parseError extracts an error message from an error response.
 func parseError(resp *http.Response) error {
 	body, _ := io.ReadAll(resp.Body)

@@ -54,15 +54,30 @@ func (s *State) Update(msg tea.Msg) (bool, tea.Cmd) {
 		return false, nil
 	}
 
-	// Handle Esc to close
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		if keyMsg.String() == "esc" {
+		// q closes modal from anywhere
+		if keyMsg.String() == "q" {
 			s.Active = nil
 			return true, nil
 		}
 	}
 
-	// Forward to modal
+	// Forward to modal (let modal handle Esc for "go back")
+	var cmd tea.Cmd
+	s.Active, cmd = s.Active.Update(msg)
+
+	// Modal returns nil to signal it wants to close
+	if s.Active == nil {
+		return true, cmd
+	}
+	return true, cmd
+}
+
+// UpdateMsg forwards non-key messages to the modal (e.g., async results).
+func (s *State) UpdateMsg(msg tea.Msg) (bool, tea.Cmd) {
+	if s.Active == nil {
+		return false, nil
+	}
 	var cmd tea.Cmd
 	s.Active, cmd = s.Active.Update(msg)
 	return true, cmd
@@ -85,7 +100,7 @@ func (s *State) View() string {
 
 	// Build title bar: title on left, hint on right
 	title := titleStyle.Render(s.Active.Title())
-	hint := hintStyle.Render("Esc to close")
+	hint := hintStyle.Render("q to close")
 
 	// Calculate padding between title and hint
 	// Border takes 2 chars (left + right), padding takes 2 chars (1 each side)

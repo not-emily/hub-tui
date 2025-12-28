@@ -1,21 +1,18 @@
 # Project Progress - hub-tui
 
 ## Plan Files
-Roadmap: [plan.md](../docs/plan/plan.md)
-Current Phase: [phase-6-2.md](../docs/plan/phases/phase-6-2.md)
+Roadmap: None
+Current Phase: None
 Latest Weekly Report: None
+Archived: [v1-initial-build](../docs/plan/_archived/v1-initial-build/)
 
-Last Updated: 2025-12-27
+Last Updated: 2025-12-28
 
 ## Current Focus
-Phase 6.2: Resource Modals - Modules, integrations, workflows, tasks modals
+Plan complete! All phases finished.
 
 ## Active Tasks
-- [NEXT] Phase 6.2: Resource Modals
-  - ⏭ Implement /modules modal
-  - ⏭ Implement /integrations modal
-  - ⏭ Implement /workflows modal
-  - ⏭ Implement /tasks modal
+None
 
 ## Open Questions/Blockers
 None
@@ -75,12 +72,43 @@ None
   - Fixed non-streaming response handling (utility, module, workflow, unknown route types now display correctly)
   - AssistantChat client method for direct /assistants/{name}/chat endpoint
 - Phase 6.1: Modal Framework
-  - Created modal framework (modal.go) with overlay rendering
+  - Created inline modal framework (renders between chat and input)
   - Built reusable list component with j/k navigation
   - Implemented /help modal with commands and keyboard shortcuts
   - Implemented /settings modal displaying config and connection status
+  - Modal has rounded border with title bar and "Esc to close" hint
   - Integrated modals into app.go with keyboard routing
-  - Esc to close modals, keys don't leak to chat when modal open
+  - Decision: Use inline modals instead of overlay (see DECISIONS.md)
+- Phase 6.2: Resource Modals
+  - Implemented /modules modal with list display and enable/disable toggle
+  - Added EnableModule/DisableModule client endpoints
+  - Implemented /workflows modal with list display and descriptions
+  - Created reusable form component with password masking and cursor support
+  - Created integrations client with configure and test endpoints
+  - Implemented /integrations modal with 3-level view (list → profiles → configure)
+  - Profile support: multiple accounts per integration, new profile creation
+  - Fixed paste handling: use tea.KeyRunes instead of msg.String() for proper paste
+  - Fixed modal navigation: q closes modal, Esc goes back within modal
+  - Auth expiry handling: detect 401 errors, redirect to login automatically
+  - Wired up all modals in app.go with async message handling
+  - Tested all resource modals (modules, workflows, integrations)
+- Phase 7: Background Tasks
+  - Created runs client with ListRuns, GetRun, RunWorkflow, CancelRun
+  - Added task-related messages (WorkflowStartedMsg, TaskStatusMsg, etc.)
+  - Status bar shows running/failed task counts
+  - #workflow triggers workflow in background
+  - Polling every 3 seconds while tasks running
+  - Completion/failure notifications in chat
+  - /tasks modal with Running, Completed, Failed sections
+  - Task detail view with step outputs
+  - Fixed API parsing (active + history arrays)
+  - Task categorization by status AND result.success
+  - Load task history from hub-core on startup
+
+## Future Enhancements (not in current plan)
+- Workflow enable/disable toggle (API: PUT /workflows/{name})
+- Workflow delete (API: DELETE /workflows/{name})
+- Integration profile rename/delete (requires hub-core API additions)
 
 ## Next Session
-Start Phase 6.2: Resource Modals
+All planned phases complete!

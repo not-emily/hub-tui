@@ -39,13 +39,21 @@ type Context struct {
 	Target string // Name of target (empty for hub)
 }
 
+// TaskState tracks running and completed workflow tasks.
+type TaskState struct {
+	Running   []Run
+	Completed []Run
+	Failed    []Run
+}
+
 // Model is the root Bubble Tea model for hub-tui.
 type Model struct {
 	config       *config.Config
 	client       *client.Client
 	program      *tea.Program // Reference for sending messages from goroutines
 	cache        Cache
-	context      Context // Current conversation context
+	context      Context   // Current conversation context
+	tasks        TaskState // Workflow task tracking
 	width        int
 	height       int
 	state        AppState
@@ -192,6 +200,91 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CacheRefreshMsg:
 		return m.handleCacheRefresh(msg)
+
+	case AuthExpiredMsg:
+		return m.handleAuthExpired()
+
+	case modal.ModulesLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.ModuleToggledMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.WorkflowsLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.IntegrationsLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.IntegrationConfiguredMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.IntegrationTestedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.TasksLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case WorkflowStartedMsg:
+		return m.handleWorkflowStarted(msg)
+
+	case WorkflowErrorMsg:
+		m.chat.AddSystemMessage("Failed to start workflow " + msg.Name + ": " + msg.Error)
+		return m, nil
+
+	case PollTasksMsg:
+		return m.handlePollTasks()
+
+	case TaskStatusMsg:
+		return m.handleTaskStatus(msg)
+
+	case TaskCancelledMsg:
+		if msg.Error != nil {
+			m.chat.AddSystemMessage("Failed to cancel task: " + msg.Error.Error())
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -260,6 +353,14 @@ func (m Model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if cmd := chat.ParseCommand(input); cmd != nil {
 				m.chat.ClearInput()
 				return m.handleCommand(cmd)
+			}
+
+			// Check for # workflow trigger
+			if len(input) > 1 && input[0] == '#' {
+				workflowName := input[1:]
+				m.chat.ClearInput()
+				m.chat.AddSystemMessage("Starting workflow: " + workflowName)
+				return m, m.doRunWorkflow(workflowName)
 			}
 
 			m.chat.AddUserMessage(input)
@@ -343,10 +444,28 @@ func (m Model) handleCommand(cmd *chat.Command) (tea.Model, tea.Cmd) {
 	case "settings":
 		return m, m.modal.Open(modal.NewSettingsModal(m.config, m.statusBar.IsConnected()))
 
-	case "modules", "integrations", "workflows", "tasks":
-		// These will open modals in Phase 6.2
-		m.chat.AddSystemMessage("/" + cmd.Name + " will be available in a future update.")
-		return m, nil
+	case "modules":
+		return m, m.modal.Open(modal.NewModulesModal(m.client))
+
+	case "workflows":
+		return m, m.modal.Open(modal.NewWorkflowsModal(m.client))
+
+	case "integrations":
+		return m, m.modal.Open(modal.NewIntegrationsModal(m.client))
+
+	case "tasks":
+		// Convert app.Run to modal.TaskRun
+		var running, completed, failed []modal.TaskRun
+		for _, r := range m.tasks.Running {
+			running = append(running, appRunToModalRun(r))
+		}
+		for _, r := range m.tasks.Completed {
+			completed = append(completed, appRunToModalRun(r))
+		}
+		for _, r := range m.tasks.Failed {
+			failed = append(failed, appRunToModalRun(r))
+		}
+		return m, m.modal.Open(modal.NewTasksModalWithState(m.client, running, completed, failed))
 
 	default:
 		if !chat.IsValidCommand(cmd.Name) {
@@ -389,8 +508,11 @@ func (m Model) handleLoginResult(msg LoginResultMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleHealthCheck(msg HealthCheckMsg) (tea.Model, tea.Cmd) {
 	if msg.Success {
 		m.statusBar.SetState(status.StateConnected)
-		// Trigger cache refresh after successful connection
-		return m, m.doRefreshCache()
+		// Trigger cache refresh and task loading after successful connection
+		return m, tea.Batch(
+			m.doRefreshCache(),
+			m.doFetchTaskStatus(),
+		)
 	}
 	m.statusBar.SetState(status.StateDisconnected)
 	// If we were in login, show the error
@@ -426,6 +548,26 @@ func (m Model) handleCacheRefresh(msg CacheRefreshMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleAuthExpired() (tea.Model, tea.Cmd) {
+	// Clear token from config
+	m.config.Token = ""
+	m.config.TokenExp = ""
+	_ = m.config.Save() // Best effort save
+
+	// Close any open modal
+	m.modal.Close()
+
+	// Reset to login state
+	m.state = StateLogin
+	m.login = login.New(false, m.config.ServerURL)
+	m.login.SetSize(m.width, m.height)
+	m.login.SetError("Session expired. Please log in again.")
+
+	m.statusBar.SetState(status.StateDisconnected)
+
+	return m, nil
+}
+
 func (m Model) doLogin(username, password string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := m.client.Login(username, password)
@@ -456,6 +598,9 @@ func (m Model) doRefreshCache() tea.Cmd {
 		// Fetch assistants
 		assistants, err := m.client.ListAssistants()
 		if err != nil {
+			if client.IsAuthError(err) {
+				return AuthExpiredMsg{}
+			}
 			return CacheRefreshMsg{Success: false, Error: "assistants: " + err.Error()}
 		}
 		for _, a := range assistants {
@@ -465,6 +610,9 @@ func (m Model) doRefreshCache() tea.Cmd {
 		// Fetch workflows
 		workflows, err := m.client.ListWorkflows()
 		if err != nil {
+			if client.IsAuthError(err) {
+				return AuthExpiredMsg{}
+			}
 			return CacheRefreshMsg{Success: false, Error: "workflows: " + err.Error()}
 		}
 		for _, w := range workflows {
@@ -474,6 +622,9 @@ func (m Model) doRefreshCache() tea.Cmd {
 		// Fetch modules
 		modules, err := m.client.ListModules()
 		if err != nil {
+			if client.IsAuthError(err) {
+				return AuthExpiredMsg{}
+			}
 			return CacheRefreshMsg{Success: false, Error: "modules: " + err.Error()}
 		}
 		for _, m := range modules {
@@ -533,6 +684,247 @@ func (m *Model) doAssistantChat(assistant, message string) tea.Cmd {
 
 		_, err := m.client.AssistantChat(ctx, assistant, message, callbacks)
 		return StreamDoneMsg{Error: err}
+	}
+}
+
+func (m Model) doRunWorkflow(name string) tea.Cmd {
+	return func() tea.Msg {
+		runID, err := m.client.RunWorkflow(name)
+		if err != nil {
+			if client.IsAuthError(err) {
+				return AuthExpiredMsg{}
+			}
+			return WorkflowErrorMsg{Name: name, Error: err.Error()}
+		}
+		return WorkflowStartedMsg{Name: name, RunID: runID}
+	}
+}
+
+func (m Model) handleWorkflowStarted(msg WorkflowStartedMsg) (tea.Model, tea.Cmd) {
+	// Add to running tasks
+	m.tasks.Running = append(m.tasks.Running, Run{
+		ID:        msg.RunID,
+		Workflow:  msg.Name,
+		Status:    "running",
+		StartedAt: time.Now().Format(time.RFC3339),
+	})
+
+	// Update status bar
+	m.updateTaskCounts()
+
+	// Start polling if this is the first running task
+	if len(m.tasks.Running) == 1 {
+		return m, m.pollTasks()
+	}
+	return m, nil
+}
+
+func (m Model) handlePollTasks() (tea.Model, tea.Cmd) {
+	// Only poll if there are running tasks
+	if len(m.tasks.Running) == 0 {
+		return m, nil
+	}
+
+	return m, tea.Batch(
+		m.doFetchTaskStatus(),
+		m.pollTasks(),
+	)
+}
+
+func (m Model) pollTasks() tea.Cmd {
+	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
+		return PollTasksMsg{}
+	})
+}
+
+func (m Model) doFetchTaskStatus() tea.Cmd {
+	return func() tea.Msg {
+		runs, err := m.client.ListRuns()
+		if err != nil {
+			if client.IsAuthError(err) {
+				return AuthExpiredMsg{}
+			}
+			return TaskStatusMsg{Error: err}
+		}
+
+		// Convert client.Run to app.Run
+		var appRuns []Run
+		for _, r := range runs {
+			appRuns = append(appRuns, Run{
+				ID:        r.ID,
+				Workflow:  r.Workflow,
+				Status:    r.Status,
+				StartedAt: r.StartedAt.Format(time.RFC3339),
+				EndedAt:   r.EndedAt.Format(time.RFC3339),
+				Error:     r.Error,
+				Result:    convertClientResult(r.Result),
+			})
+		}
+
+		return TaskStatusMsg{Runs: appRuns}
+	}
+}
+
+func (m Model) handleTaskStatus(msg TaskStatusMsg) (tea.Model, tea.Cmd) {
+	if msg.Error != nil {
+		// Could log error, but keep polling
+		return m, nil
+	}
+
+	// Build maps for tracking
+	apiRuns := make(map[string]Run)
+	trackedIDs := make(map[string]bool)
+	for _, r := range msg.Runs {
+		apiRuns[r.ID] = r
+	}
+	for _, r := range m.tasks.Running {
+		trackedIDs[r.ID] = true
+	}
+	for _, r := range m.tasks.Completed {
+		trackedIDs[r.ID] = true
+	}
+	for _, r := range m.tasks.Failed {
+		trackedIDs[r.ID] = true
+	}
+
+	// Check each running task we're tracking
+	var stillRunning []Run
+	for _, tracked := range m.tasks.Running {
+		if apiRun, found := apiRuns[tracked.ID]; found {
+			// Task is still in API response
+			if apiRun.Status == "running" {
+				stillRunning = append(stillRunning, apiRun)
+			} else if isRunSuccess(apiRun) {
+				m.tasks.Completed = append(m.tasks.Completed, apiRun)
+				m.chat.AddSystemMessage("Workflow completed: " + apiRun.Workflow)
+			} else {
+				m.tasks.Failed = append(m.tasks.Failed, apiRun)
+				errMsg := apiRun.Workflow
+				if apiRun.Error != "" {
+					errMsg += ": " + apiRun.Error
+				} else if apiRun.Result != nil && apiRun.Result.Error != "" {
+					errMsg += ": " + apiRun.Result.Error
+				}
+				m.chat.AddSystemMessage("Workflow failed: " + errMsg)
+			}
+		} else {
+			// Task disappeared from API - assume completed successfully
+			m.chat.AddSystemMessage("Workflow completed: " + tracked.Workflow)
+			tracked.Status = "completed"
+			m.tasks.Completed = append(m.tasks.Completed, tracked)
+		}
+	}
+
+	// Add any runs from API that we're not already tracking (startup case)
+	for _, r := range msg.Runs {
+		if !trackedIDs[r.ID] {
+			if r.Status == "running" {
+				stillRunning = append(stillRunning, r)
+			} else if isRunSuccess(r) {
+				m.tasks.Completed = append(m.tasks.Completed, r)
+			} else {
+				m.tasks.Failed = append(m.tasks.Failed, r)
+			}
+		}
+	}
+
+	m.tasks.Running = stillRunning
+
+	// Update status bar
+	m.updateTaskCounts()
+
+	return m, nil
+}
+
+func (m *Model) updateTaskCounts() {
+	m.statusBar.SetTaskCounts(len(m.tasks.Running), len(m.tasks.Failed))
+}
+
+// isRunSuccess returns true if the run completed successfully.
+// A run is successful if status is "completed" AND result.success is true (or result is nil).
+func isRunSuccess(r Run) bool {
+	if r.Status == "failed" {
+		return false
+	}
+	if r.Result != nil && !r.Result.Success {
+		return false
+	}
+	return true
+}
+
+func (m Model) doCancelTask(runID string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.client.CancelRun(runID)
+		if err != nil {
+			if client.IsAuthError(err) {
+				return AuthExpiredMsg{}
+			}
+		}
+		return TaskCancelledMsg{RunID: runID, Error: err}
+	}
+}
+
+// appRunToModalRun converts an app.Run to a modal.TaskRun.
+func appRunToModalRun(r Run) modal.TaskRun {
+	var startedAt, endedAt time.Time
+	if r.StartedAt != "" {
+		startedAt, _ = time.Parse(time.RFC3339, r.StartedAt)
+	}
+	if r.EndedAt != "" {
+		endedAt, _ = time.Parse(time.RFC3339, r.EndedAt)
+	}
+	return modal.TaskRun{
+		ID:        r.ID,
+		Workflow:  r.Workflow,
+		Status:    r.Status,
+		StartedAt: startedAt,
+		EndedAt:   endedAt,
+		Error:     r.Error,
+		Result:    convertAppResultToClient(r.Result),
+	}
+}
+
+// convertClientResult converts client.RunResult to app.RunResult.
+func convertClientResult(cr *client.RunResult) *RunResult {
+	if cr == nil {
+		return nil
+	}
+	var steps []StepResult
+	for _, s := range cr.Steps {
+		steps = append(steps, StepResult{
+			StepName: s.StepName,
+			Success:  s.Success,
+			Output:   s.Output,
+			Error:    s.Error,
+		})
+	}
+	return &RunResult{
+		WorkflowName: cr.WorkflowName,
+		Success:      cr.Success,
+		Steps:        steps,
+		Error:        cr.Error,
+	}
+}
+
+// convertAppResultToClient converts app.RunResult to client.RunResult for modal.
+func convertAppResultToClient(ar *RunResult) *client.RunResult {
+	if ar == nil {
+		return nil
+	}
+	var steps []client.StepResult
+	for _, s := range ar.Steps {
+		steps = append(steps, client.StepResult{
+			StepName: s.StepName,
+			Success:  s.Success,
+			Output:   s.Output,
+			Error:    s.Error,
+		})
+	}
+	return &client.RunResult{
+		WorkflowName: ar.WorkflowName,
+		Success:      ar.Success,
+		Steps:        steps,
+		Error:        ar.Error,
 	}
 }
 

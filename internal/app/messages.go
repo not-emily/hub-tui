@@ -51,3 +51,67 @@ type CacheRefreshMsg struct {
 	Workflows  []string
 	Modules    []string
 }
+
+// AuthExpiredMsg is sent when an API call fails due to expired/invalid token.
+type AuthExpiredMsg struct{}
+
+// WorkflowStartedMsg is sent when a workflow is successfully triggered.
+type WorkflowStartedMsg struct {
+	Name  string
+	RunID string
+}
+
+// WorkflowErrorMsg is sent when a workflow fails to start.
+type WorkflowErrorMsg struct {
+	Name  string
+	Error string
+}
+
+// PollTasksMsg triggers a task status poll.
+type PollTasksMsg struct{}
+
+// TaskStatusMsg is sent when task status is fetched.
+type TaskStatusMsg struct {
+	Runs  []Run
+	Error error
+}
+
+// TaskCompletedMsg is sent when a running task completes.
+type TaskCompletedMsg struct {
+	Workflow string
+	Success  bool
+	Error    string
+}
+
+// TaskCancelledMsg is sent when a task is cancelled.
+type TaskCancelledMsg struct {
+	RunID string
+	Error error
+}
+
+// Run mirrors client.Run for use in messages.
+type Run struct {
+	ID        string
+	Workflow  string
+	Status    string
+	StartedAt string
+	EndedAt   string
+	Error     string
+	Result    *RunResult
+}
+
+// RunResult mirrors client.RunResult.
+type RunResult struct {
+	WorkflowName string
+	Success      bool
+	Steps        []StepResult
+	Error        string
+}
+
+// StepResult mirrors client.StepResult.
+type StepResult struct {
+	StepName string
+	Success  bool
+	Output   interface{}
+	Error    string
+}

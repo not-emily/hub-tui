@@ -33,6 +33,8 @@ func (m *HelpModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "esc":
+			return nil, nil // Close modal
 		case "up", "k":
 			if m.scroll > 0 {
 				m.scroll--
@@ -52,7 +54,7 @@ func (m *HelpModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 
 // contentLen returns the number of lines in the help content.
 func (m *HelpModal) contentLen() int {
-	return 25 // Update this if content changes
+	return 26 // Update this if content changes
 }
 
 // Title returns the modal title.
@@ -95,7 +97,8 @@ func (m *HelpModal) View() string {
 		cmdStyle.Render("  Ctrl+J   ") + descStyle.Render("  New line"),
 		cmdStyle.Render("  Tab      ") + descStyle.Render("  Autocomplete"),
 		cmdStyle.Render("  Ctrl+C   ") + descStyle.Render("  Exit (×2)"),
-		cmdStyle.Render("  Esc      ") + descStyle.Render("  Close / Cancel"),
+		cmdStyle.Render("  Esc      ") + descStyle.Render("  Back / Cancel"),
+		cmdStyle.Render("  q        ") + descStyle.Render("  Close modal"),
 		cmdStyle.Render("  j/k      ") + descStyle.Render("  Navigate lists"),
 		cmdStyle.Render("  ↑/↓      ") + descStyle.Render("  Scroll chat"),
 	}
