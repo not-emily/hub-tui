@@ -91,13 +91,14 @@ type TaskCancelledMsg struct {
 
 // Run mirrors client.Run for use in messages.
 type Run struct {
-	ID        string
-	Workflow  string
-	Status    string
-	StartedAt string
-	EndedAt   string
-	Error     string
-	Result    *RunResult
+	ID             string
+	Workflow       string
+	Status         string
+	StartedAt      string
+	EndedAt        string
+	Error          string
+	Result         *RunResult
+	NeedsAttention bool
 }
 
 // RunResult mirrors client.RunResult.

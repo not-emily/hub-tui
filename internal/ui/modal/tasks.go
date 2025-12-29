@@ -3,6 +3,7 @@ package modal
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,13 +16,14 @@ import (
 
 // TaskRun represents a task run for the modal.
 type TaskRun struct {
-	ID        string
-	Workflow  string
-	Status    string
-	StartedAt time.Time
-	EndedAt   time.Time
-	Error     string
-	Result    *client.RunResult
+	ID             string
+	Workflow       string
+	Status         string
+	StartedAt      time.Time
+	EndedAt        time.Time
+	Error          string
+	Result         *client.RunResult
+	NeedsAttention bool
 }
 
 // isRunSuccess returns true if the run completed successfully.
@@ -70,16 +72,19 @@ func formatRunOutput(result *client.RunResult) string {
 
 // TasksModal displays running, completed, and failed tasks.
 type TasksModal struct {
-	client    *client.Client
-	running   []TaskRun
-	completed []TaskRun
-	failed    []TaskRun
-	allRuns   []TaskRun // Combined list for navigation
-	selected  int
-	loading   bool
-	error     string
-	view      tasksView
-	detailRun *TaskRun // Run being viewed in detail
+	client           *client.Client
+	running          []TaskRun
+	completed        []TaskRun
+	failed           []TaskRun
+	allRuns          []TaskRun // Combined list for navigation
+	selected         int
+	loading          bool
+	loadingDetail    bool   // Loading full run details
+	error            string // Error loading task list
+	detailError      string // Error loading task details
+	view             tasksView
+	detailRun        *TaskRun // Run being viewed in detail
+	pendingDismissID string   // ID of run pending dismiss (double-press confirmation)
 }
 
 type tasksView int
@@ -100,6 +105,11 @@ func NewTasksModal(c *client.Client) *TasksModal {
 
 // NewTasksModalWithState creates a new tasks modal with pre-loaded task state.
 func NewTasksModalWithState(c *client.Client, running, completed, failed []TaskRun) *TasksModal {
+	// Sort each category by most recent first
+	sortByMostRecent(running)
+	sortByMostRecent(completed)
+	sortByMostRecent(failed)
+
 	m := &TasksModal{
 		client:    c,
 		running:   running,
@@ -127,8 +137,25 @@ type TasksLoadedMsg struct {
 	Error     error
 }
 
+// TaskDetailLoadedMsg is sent when full run details are loaded.
+type TaskDetailLoadedMsg struct {
+	Run   *TaskRun
+	Error error
+}
+
 // TaskCancelRequestMsg is sent when a cancel is requested.
 type TaskCancelRequestMsg struct {
+	RunID string
+}
+
+// TaskDismissedMsg is sent when a task is dismissed.
+type TaskDismissedMsg struct {
+	RunID string
+	Error error
+}
+
+// DismissHintExpiredMsg is sent when the dismiss confirmation hint expires.
+type DismissHintExpiredMsg struct {
 	RunID string
 }
 
@@ -143,21 +170,26 @@ func (m *TasksModal) Init() tea.Cmd {
 
 func (m *TasksModal) loadTasks() tea.Cmd {
 	return func() tea.Msg {
-		runs, err := m.client.ListRuns()
+		// Load today's tasks by default
+		today := time.Now().Format("2006-01-02")
+		response, err := m.client.ListRuns(&client.RunsFilter{
+			Since: today,
+		})
 		if err != nil {
 			return TasksLoadedMsg{Error: err}
 		}
 
 		var running, completed, failed []TaskRun
-		for _, r := range runs {
+		for _, r := range response.Runs {
 			tr := TaskRun{
-				ID:        r.ID,
-				Workflow:  r.Workflow,
-				Status:    r.Status,
-				StartedAt: r.StartedAt,
-				EndedAt:   r.EndedAt,
-				Error:     r.Error,
-				Result:    r.Result,
+				ID:             r.ID,
+				Workflow:       r.Workflow,
+				Status:         r.Status,
+				StartedAt:      r.StartedAt,
+				EndedAt:        r.EndedAt,
+				Error:          r.Error,
+				Result:         r.Result,
+				NeedsAttention: r.NeedsAttention,
 			}
 			if r.Status == "running" {
 				running = append(running, tr)
@@ -168,7 +200,46 @@ func (m *TasksModal) loadTasks() tea.Cmd {
 			}
 		}
 
+		// Sort each category by most recent first
+		sortByMostRecent(running)
+		sortByMostRecent(completed)
+		sortByMostRecent(failed)
+
 		return TasksLoadedMsg{Running: running, Completed: completed, Failed: failed}
+	}
+}
+
+func (m *TasksModal) loadTaskDetail(runID string) tea.Cmd {
+	return func() tea.Msg {
+		// Retry up to 3 times with a short delay to handle race conditions
+		// where the run just completed but hub-core hasn't finished writing
+		var run *client.Run
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			run, err = m.client.GetRun(runID)
+			if err == nil {
+				break
+			}
+			// If not found, wait a bit and retry (race condition with hub-core)
+			if attempt < 2 {
+				time.Sleep(300 * time.Millisecond)
+			}
+		}
+		if err != nil {
+			return TaskDetailLoadedMsg{Error: err}
+		}
+
+		tr := &TaskRun{
+			ID:             run.ID,
+			Workflow:       run.Workflow,
+			Status:         run.Status,
+			StartedAt:      run.StartedAt,
+			EndedAt:        run.EndedAt,
+			Error:          run.Error,
+			Result:         run.Result,
+			NeedsAttention: run.NeedsAttention,
+		}
+		return TaskDetailLoadedMsg{Run: tr}
 	}
 }
 
@@ -188,6 +259,35 @@ func (m *TasksModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		}
 		return m, nil
 
+	case TaskDetailLoadedMsg:
+		m.loadingDetail = false
+		if msg.Error != nil {
+			// Show error in detail view, don't hide the whole list
+			m.detailError = msg.Error.Error()
+		} else if msg.Run != nil {
+			m.detailRun = msg.Run
+			m.detailError = ""
+		}
+		return m, nil
+
+	case TaskDismissedMsg:
+		// Clear pending dismiss state
+		m.pendingDismissID = ""
+		if msg.Error != nil {
+			m.error = msg.Error.Error()
+		} else {
+			// Reload tasks to reflect the dismiss
+			return m, m.loadTasks()
+		}
+		return m, nil
+
+	case DismissHintExpiredMsg:
+		// Only clear if it's still the same pending dismiss
+		if m.pendingDismissID == msg.RunID {
+			m.pendingDismissID = ""
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		if m.view == viewTaskDetail {
 			return m.updateDetail(msg)
@@ -200,27 +300,51 @@ func (m *TasksModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 func (m *TasksModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		return nil, nil // Close modal
+		m.pendingDismissID = "" // Clear pending dismiss on escape
+		return nil, nil         // Close modal
 	case "up", "k":
+		m.pendingDismissID = "" // Clear pending dismiss on navigation
 		if m.selected > 0 {
 			m.selected--
 		}
 	case "down", "j":
+		m.pendingDismissID = "" // Clear pending dismiss on navigation
 		if m.selected < len(m.allRuns)-1 {
 			m.selected++
 		}
 	case "enter":
+		m.pendingDismissID = "" // Clear pending dismiss
 		if len(m.allRuns) > 0 && m.selected < len(m.allRuns) {
 			run := m.allRuns[m.selected]
-			m.detailRun = &run
+			m.detailRun = &run // Show basic info immediately
 			m.view = viewTaskDetail
+			m.loadingDetail = true
+			// Fetch full details from API
+			return m, m.loadTaskDetail(run.ID)
 		}
 	case "c":
+		m.pendingDismissID = "" // Clear pending dismiss
 		// Cancel selected running task
 		if len(m.allRuns) > 0 && m.selected < len(m.allRuns) {
 			run := m.allRuns[m.selected]
 			if run.Status == "running" {
 				return m, m.cancelTask(run.ID)
+			}
+		}
+	case "d":
+		// Dismiss selected task that needs attention
+		if len(m.allRuns) > 0 && m.selected < len(m.allRuns) {
+			run := m.allRuns[m.selected]
+			if run.NeedsAttention {
+				if m.pendingDismissID == run.ID {
+					// Second press - actually dismiss
+					return m, m.dismissTask(run.ID)
+				}
+				// First press - set pending and start timeout
+				m.pendingDismissID = run.ID
+				return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+					return DismissHintExpiredMsg{RunID: run.ID}
+				})
 			}
 		}
 	}
@@ -232,10 +356,38 @@ func (m *TasksModal) updateDetail(msg tea.KeyMsg) (Modal, tea.Cmd) {
 	case "esc":
 		m.view = viewTasksList
 		m.detailRun = nil
+		m.detailError = ""
+		m.pendingDismissID = ""
+	case "r":
+		m.pendingDismissID = "" // Clear pending dismiss
+		// Refresh details
+		if m.detailRun != nil && !m.loadingDetail {
+			m.loadingDetail = true
+			m.detailError = ""
+			return m, m.loadTaskDetail(m.detailRun.ID)
+		}
 	case "c":
+		m.pendingDismissID = "" // Clear pending dismiss
 		// Cancel if running
 		if m.detailRun != nil && m.detailRun.Status == "running" {
 			return m, m.cancelTask(m.detailRun.ID)
+		}
+	case "d":
+		// Dismiss if needs attention
+		if m.detailRun != nil && m.detailRun.NeedsAttention {
+			runID := m.detailRun.ID // Capture ID before any state changes
+			if m.pendingDismissID == runID {
+				// Second press - actually dismiss
+				m.view = viewTasksList // Return to list after dismiss
+				m.detailRun = nil
+				m.pendingDismissID = ""
+				return m, m.dismissTask(runID)
+			}
+			// First press - set pending and start timeout
+			m.pendingDismissID = runID
+			return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+				return DismissHintExpiredMsg{RunID: runID}
+			})
 		}
 	}
 	return m, nil
@@ -287,10 +439,12 @@ func (m *TasksModal) viewList() string {
 	headerStyle := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
 	selectedStyle := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
 	normalStyle := lipgloss.NewStyle().Foreground(theme.TextPrimary)
+	attentionStyle := lipgloss.NewStyle().Foreground(theme.Warning).Bold(true)
 	timeStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
 	runningIndicator := lipgloss.NewStyle().Foreground(theme.Warning).Render("●")
 	completedIndicator := lipgloss.NewStyle().Foreground(theme.Success).Render("✓")
 	failedIndicator := lipgloss.NewStyle().Foreground(theme.Error).Render("✗")
+	attentionIndicator := lipgloss.NewStyle().Foreground(theme.Warning).Bold(true).Render("⚠")
 
 	// Running section
 	if len(m.running) > 0 {
@@ -299,6 +453,11 @@ func (m *TasksModal) viewList() string {
 			name := normalStyle.Render(r.Workflow)
 			if runIndex == m.selected {
 				name = selectedStyle.Render(r.Workflow)
+			} else if r.NeedsAttention {
+				name = attentionStyle.Render(r.Workflow)
+			}
+			if r.NeedsAttention {
+				name += " " + attentionIndicator
 			}
 			elapsed := formatElapsed(r.StartedAt)
 			line := fmt.Sprintf("  %s %s    %s", runningIndicator, name, timeStyle.Render("Started "+elapsed))
@@ -315,6 +474,11 @@ func (m *TasksModal) viewList() string {
 			name := normalStyle.Render(r.Workflow)
 			if runIndex == m.selected {
 				name = selectedStyle.Render(r.Workflow)
+			} else if r.NeedsAttention {
+				name = attentionStyle.Render(r.Workflow)
+			}
+			if r.NeedsAttention {
+				name += " " + attentionIndicator
 			}
 			elapsed := formatElapsed(r.EndedAt)
 			line := fmt.Sprintf("  %s %s    %s", completedIndicator, name, timeStyle.Render("Completed "+elapsed))
@@ -331,6 +495,11 @@ func (m *TasksModal) viewList() string {
 			name := normalStyle.Render(r.Workflow)
 			if runIndex == m.selected {
 				name = selectedStyle.Render(r.Workflow)
+			} else if r.NeedsAttention {
+				name = attentionStyle.Render(r.Workflow)
+			}
+			if r.NeedsAttention {
+				name += " " + attentionIndicator
 			}
 			elapsed := formatElapsed(r.EndedAt)
 			errText := ""
@@ -346,11 +515,27 @@ func (m *TasksModal) viewList() string {
 
 	// Hints
 	hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
-	hints := "[Enter] Details"
-	if len(m.running) > 0 {
-		hints += "  [c] Cancel"
+	warningHintStyle := lipgloss.NewStyle().Foreground(theme.Warning)
+
+	// Check if selected task needs attention for dismiss hint
+	var selectedNeedsAttention bool
+	if len(m.allRuns) > 0 && m.selected < len(m.allRuns) {
+		selectedNeedsAttention = m.allRuns[m.selected].NeedsAttention
 	}
-	lines = append(lines, hintStyle.Render(hints))
+
+	// Check for pending dismiss confirmation
+	if m.pendingDismissID != "" {
+		lines = append(lines, warningHintStyle.Render("Press d again to dismiss"))
+	} else {
+		hints := "[Enter] Details"
+		if len(m.running) > 0 {
+			hints += "  [c] Cancel"
+		}
+		if selectedNeedsAttention {
+			hints += "  [d] Dismiss"
+		}
+		lines = append(lines, hintStyle.Render(hints))
+	}
 
 	return strings.Join(lines, "\n")
 }
@@ -376,8 +561,24 @@ func (m *TasksModal) viewDetail() string {
 
 	var lines []string
 
-	lines = append(lines, labelStyle.Render("Status:    ")+statusStyle.Render(r.Status))
+	statusLine := labelStyle.Render("Status:    ") + statusStyle.Render(r.Status)
+	if r.NeedsAttention {
+		attentionStyle := lipgloss.NewStyle().Foreground(theme.Warning).Bold(true)
+		statusLine += "  " + attentionStyle.Render("⚠ Needs Attention")
+	}
+	lines = append(lines, statusLine)
 	lines = append(lines, labelStyle.Render("Started:   ")+valueStyle.Render(formatTime(r.StartedAt)))
+
+	// Show loading indicator or error for fetching full details
+	if m.loadingDetail {
+		lines = append(lines, "")
+		lines = append(lines, labelStyle.Render("Loading details..."))
+	} else if m.detailError != "" {
+		lines = append(lines, "")
+		errorStyle := lipgloss.NewStyle().Foreground(theme.Error)
+		lines = append(lines, errorStyle.Render("Could not load full details: "+m.detailError))
+		lines = append(lines, labelStyle.Render("(Run may have been cleaned up by hub-core)"))
+	}
 
 	if !r.EndedAt.IsZero() {
 		lines = append(lines, labelStyle.Render("Ended:     ")+valueStyle.Render(formatTime(r.EndedAt)))
@@ -403,11 +604,21 @@ func (m *TasksModal) viewDetail() string {
 
 	lines = append(lines, "")
 	hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
-	hints := "[Esc] Back"
-	if r.Status == "running" {
-		hints += "  [c] Cancel"
+	warningHintStyle := lipgloss.NewStyle().Foreground(theme.Warning)
+
+	// Check for pending dismiss confirmation
+	if m.pendingDismissID == r.ID {
+		lines = append(lines, warningHintStyle.Render("Press d again to dismiss"))
+	} else {
+		hints := "[Esc] Back  [r] Refresh"
+		if r.Status == "running" {
+			hints += "  [c] Cancel"
+		}
+		if r.NeedsAttention {
+			hints += "  [d] Dismiss"
+		}
+		lines = append(lines, hintStyle.Render(hints))
 	}
-	lines = append(lines, hintStyle.Render(hints))
 
 	return strings.Join(lines, "\n")
 }
@@ -419,22 +630,26 @@ func (m *TasksModal) cancelTask(runID string) tea.Cmd {
 		if err != nil {
 			return TasksLoadedMsg{Error: err}
 		}
-		// Reload tasks after cancel
-		runs, err := m.client.ListRuns()
+		// Reload today's tasks after cancel
+		today := time.Now().Format("2006-01-02")
+		response, err := m.client.ListRuns(&client.RunsFilter{
+			Since: today,
+		})
 		if err != nil {
 			return TasksLoadedMsg{Error: err}
 		}
 
 		var running, completed, failed []TaskRun
-		for _, r := range runs {
+		for _, r := range response.Runs {
 			tr := TaskRun{
-				ID:        r.ID,
-				Workflow:  r.Workflow,
-				Status:    r.Status,
-				StartedAt: r.StartedAt,
-				EndedAt:   r.EndedAt,
-				Error:     r.Error,
-				Result:    r.Result,
+				ID:             r.ID,
+				Workflow:       r.Workflow,
+				Status:         r.Status,
+				StartedAt:      r.StartedAt,
+				EndedAt:        r.EndedAt,
+				Error:          r.Error,
+				Result:         r.Result,
+				NeedsAttention: r.NeedsAttention,
 			}
 			if r.Status == "running" {
 				running = append(running, tr)
@@ -445,8 +660,48 @@ func (m *TasksModal) cancelTask(runID string) tea.Cmd {
 			}
 		}
 
+		// Sort each category by most recent first
+		sortByMostRecent(running)
+		sortByMostRecent(completed)
+		sortByMostRecent(failed)
+
 		return TasksLoadedMsg{Running: running, Completed: completed, Failed: failed}
 	}
+}
+
+// dismissTask returns a command to dismiss a task that needs attention.
+func (m *TasksModal) dismissTask(runID string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.client.DismissRun(runID)
+		return TaskDismissedMsg{RunID: runID, Error: err}
+	}
+}
+
+// sortByMostRecent sorts tasks with needs_attention first, then by most recent.
+func sortByMostRecent(tasks []TaskRun) {
+	sort.Slice(tasks, func(i, j int) bool {
+		ti, tj := tasks[i], tasks[j]
+
+		// Needs attention items always come first
+		if ti.NeedsAttention != tj.NeedsAttention {
+			return ti.NeedsAttention
+		}
+
+		// Within same attention status, sort by time
+		// For running tasks, sort by StartedAt; for completed/failed, sort by EndedAt
+		if ti.Status == "running" {
+			return ti.StartedAt.After(tj.StartedAt)
+		}
+		// Use EndedAt for completed/failed, fallback to StartedAt if zero
+		endI, endJ := ti.EndedAt, tj.EndedAt
+		if endI.IsZero() {
+			endI = ti.StartedAt
+		}
+		if endJ.IsZero() {
+			endJ = tj.StartedAt
+		}
+		return endI.After(endJ)
+	})
 }
 
 // formatElapsed returns a human-readable elapsed time.

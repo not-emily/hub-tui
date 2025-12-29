@@ -267,6 +267,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case modal.TaskDetailLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.TaskDismissedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		var cmds []tea.Cmd
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			cmds = append(cmds, cmd)
+		}
+		// Fetch task status immediately to update status bar counts
+		if msg.Error == nil {
+			cmds = append(cmds, m.doFetchTaskStatus())
+		}
+		return m, tea.Batch(cmds...)
+
+	case modal.DismissHintExpiredMsg:
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
 	case WorkflowStartedMsg:
 		return m.handleWorkflowStarted(msg)
 
@@ -739,7 +769,11 @@ func (m Model) pollTasks() tea.Cmd {
 
 func (m Model) doFetchTaskStatus() tea.Cmd {
 	return func() tea.Msg {
-		runs, err := m.client.ListRuns()
+		// Fetch today's tasks for status bar counts
+		today := time.Now().Format("2006-01-02")
+		response, err := m.client.ListRuns(&client.RunsFilter{
+			Since: today,
+		})
 		if err != nil {
 			if client.IsAuthError(err) {
 				return AuthExpiredMsg{}
@@ -749,15 +783,16 @@ func (m Model) doFetchTaskStatus() tea.Cmd {
 
 		// Convert client.Run to app.Run
 		var appRuns []Run
-		for _, r := range runs {
+		for _, r := range response.Runs {
 			appRuns = append(appRuns, Run{
-				ID:        r.ID,
-				Workflow:  r.Workflow,
-				Status:    r.Status,
-				StartedAt: r.StartedAt.Format(time.RFC3339),
-				EndedAt:   r.EndedAt.Format(time.RFC3339),
-				Error:     r.Error,
-				Result:    convertClientResult(r.Result),
+				ID:             r.ID,
+				Workflow:       r.Workflow,
+				Status:         r.Status,
+				StartedAt:      r.StartedAt.Format(time.RFC3339),
+				EndedAt:        r.EndedAt.Format(time.RFC3339),
+				Error:          r.Error,
+				Result:         convertClientResult(r.Result),
+				NeedsAttention: r.NeedsAttention,
 			})
 		}
 
@@ -771,34 +806,29 @@ func (m Model) handleTaskStatus(msg TaskStatusMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Build maps for tracking
+	// Build map of API runs for quick lookup
 	apiRuns := make(map[string]Run)
-	trackedIDs := make(map[string]bool)
 	for _, r := range msg.Runs {
 		apiRuns[r.ID] = r
 	}
-	for _, r := range m.tasks.Running {
-		trackedIDs[r.ID] = true
-	}
-	for _, r := range m.tasks.Completed {
-		trackedIDs[r.ID] = true
-	}
-	for _, r := range m.tasks.Failed {
-		trackedIDs[r.ID] = true
-	}
 
-	// Check each running task we're tracking
-	var stillRunning []Run
+	// Track which IDs we've already processed (to avoid duplicates)
+	processedIDs := make(map[string]bool)
+
+	// Build new task lists
+	var newRunning, newCompleted, newFailed []Run
+
+	// Process currently tracked running tasks - detect state transitions
 	for _, tracked := range m.tasks.Running {
+		processedIDs[tracked.ID] = true
 		if apiRun, found := apiRuns[tracked.ID]; found {
-			// Task is still in API response
 			if apiRun.Status == "running" {
-				stillRunning = append(stillRunning, apiRun)
+				newRunning = append(newRunning, apiRun)
 			} else if isRunSuccess(apiRun) {
-				m.tasks.Completed = append(m.tasks.Completed, apiRun)
+				newCompleted = append(newCompleted, apiRun)
 				m.chat.AddSystemMessage("Workflow completed: " + apiRun.Workflow)
 			} else {
-				m.tasks.Failed = append(m.tasks.Failed, apiRun)
+				newFailed = append(newFailed, apiRun)
 				errMsg := apiRun.Workflow
 				if apiRun.Error != "" {
 					errMsg += ": " + apiRun.Error
@@ -808,27 +838,56 @@ func (m Model) handleTaskStatus(msg TaskStatusMsg) (tea.Model, tea.Cmd) {
 				m.chat.AddSystemMessage("Workflow failed: " + errMsg)
 			}
 		} else {
-			// Task disappeared from API - assume completed successfully
+			// Task disappeared from API - assume completed
 			m.chat.AddSystemMessage("Workflow completed: " + tracked.Workflow)
 			tracked.Status = "completed"
-			m.tasks.Completed = append(m.tasks.Completed, tracked)
+			newCompleted = append(newCompleted, tracked)
 		}
 	}
 
-	// Add any runs from API that we're not already tracking (startup case)
+	// Update existing completed tasks from API (syncs NeedsAttention, etc.)
+	for _, tracked := range m.tasks.Completed {
+		if processedIDs[tracked.ID] {
+			continue // Already processed from running transition
+		}
+		processedIDs[tracked.ID] = true
+		if apiRun, found := apiRuns[tracked.ID]; found {
+			newCompleted = append(newCompleted, apiRun)
+		} else {
+			newCompleted = append(newCompleted, tracked)
+		}
+	}
+
+	// Update existing failed tasks from API (syncs NeedsAttention, etc.)
+	for _, tracked := range m.tasks.Failed {
+		if processedIDs[tracked.ID] {
+			continue // Already processed
+		}
+		processedIDs[tracked.ID] = true
+		if apiRun, found := apiRuns[tracked.ID]; found {
+			newFailed = append(newFailed, apiRun)
+		} else {
+			newFailed = append(newFailed, tracked)
+		}
+	}
+
+	// Add any runs from API that we're not already tracking (startup/refresh case)
 	for _, r := range msg.Runs {
-		if !trackedIDs[r.ID] {
-			if r.Status == "running" {
-				stillRunning = append(stillRunning, r)
-			} else if isRunSuccess(r) {
-				m.tasks.Completed = append(m.tasks.Completed, r)
-			} else {
-				m.tasks.Failed = append(m.tasks.Failed, r)
-			}
+		if processedIDs[r.ID] {
+			continue
+		}
+		if r.Status == "running" {
+			newRunning = append(newRunning, r)
+		} else if isRunSuccess(r) {
+			newCompleted = append(newCompleted, r)
+		} else {
+			newFailed = append(newFailed, r)
 		}
 	}
 
-	m.tasks.Running = stillRunning
+	m.tasks.Running = newRunning
+	m.tasks.Completed = newCompleted
+	m.tasks.Failed = newFailed
 
 	// Update status bar
 	m.updateTaskCounts()
@@ -837,7 +896,24 @@ func (m Model) handleTaskStatus(msg TaskStatusMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateTaskCounts() {
-	m.statusBar.SetTaskCounts(len(m.tasks.Running), len(m.tasks.Failed))
+	// Count items needing attention across all categories
+	needsAttention := 0
+	for _, r := range m.tasks.Running {
+		if r.NeedsAttention {
+			needsAttention++
+		}
+	}
+	for _, r := range m.tasks.Completed {
+		if r.NeedsAttention {
+			needsAttention++
+		}
+	}
+	for _, r := range m.tasks.Failed {
+		if r.NeedsAttention {
+			needsAttention++
+		}
+	}
+	m.statusBar.SetTaskCounts(len(m.tasks.Running), needsAttention)
 }
 
 // isRunSuccess returns true if the run completed successfully.
@@ -874,13 +950,14 @@ func appRunToModalRun(r Run) modal.TaskRun {
 		endedAt, _ = time.Parse(time.RFC3339, r.EndedAt)
 	}
 	return modal.TaskRun{
-		ID:        r.ID,
-		Workflow:  r.Workflow,
-		Status:    r.Status,
-		StartedAt: startedAt,
-		EndedAt:   endedAt,
-		Error:     r.Error,
-		Result:    convertAppResultToClient(r.Result),
+		ID:             r.ID,
+		Workflow:       r.Workflow,
+		Status:         r.Status,
+		StartedAt:      startedAt,
+		EndedAt:        endedAt,
+		Error:          r.Error,
+		Result:         convertAppResultToClient(r.Result),
+		NeedsAttention: r.NeedsAttention,
 	}
 }
 

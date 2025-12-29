@@ -20,14 +20,14 @@ const (
 
 // Model is the status bar component.
 type Model struct {
-	width        int
-	state        State
-	serverURL    string
-	ctrlCPressed bool
-	contextType  string // "hub", "assistant", etc.
-	contextName  string // Name of assistant/workflow
-	runningCount int    // Number of running tasks
-	failedCount  int    // Number of failed tasks
+	width              int
+	state              State
+	serverURL          string
+	ctrlCPressed       bool
+	contextType        string // "hub", "assistant", etc.
+	contextName        string // Name of assistant/workflow
+	runningCount       int    // Number of running tasks
+	needsAttentionCount int   // Number of tasks needing attention
 }
 
 // New creates a new status bar model.
@@ -63,10 +63,10 @@ func (m *Model) SetContext(contextType, contextName string) {
 	m.contextName = contextName
 }
 
-// SetTaskCounts sets the running and failed task counts.
-func (m *Model) SetTaskCounts(running, failed int) {
+// SetTaskCounts sets the running and needs-attention task counts.
+func (m *Model) SetTaskCounts(running, needsAttention int) {
 	m.runningCount = running
-	m.failedCount = failed
+	m.needsAttentionCount = needsAttention
 }
 
 // View renders the status bar.
@@ -160,7 +160,7 @@ func repeatSpace(n int) string {
 
 // taskIndicator returns the task count display string.
 func (m Model) taskIndicator() string {
-	if m.runningCount == 0 && m.failedCount == 0 {
+	if m.runningCount == 0 && m.needsAttentionCount == 0 {
 		return ""
 	}
 
@@ -172,10 +172,15 @@ func (m Model) taskIndicator() string {
 		parts = append(parts, runningStyle.Render(fmt.Sprintf("%d running", m.runningCount)))
 	}
 
-	if m.failedCount > 0 {
-		failedStyle := lipgloss.NewStyle().
-			Foreground(theme.Error)
-		parts = append(parts, failedStyle.Render(fmt.Sprintf("%d failed", m.failedCount)))
+	if m.needsAttentionCount > 0 {
+		attentionStyle := lipgloss.NewStyle().
+			Foreground(theme.Warning).
+			Bold(true)
+		if m.needsAttentionCount == 1 {
+			parts = append(parts, attentionStyle.Render("1 task needs attention"))
+		} else {
+			parts = append(parts, attentionStyle.Render(fmt.Sprintf("%d tasks need attention", m.needsAttentionCount)))
+		}
 	}
 
 	if len(parts) == 1 {
