@@ -73,9 +73,10 @@ func formatRunOutput(result *client.RunResult) string {
 // TasksModal displays running, completed, and failed tasks.
 type TasksModal struct {
 	client           *client.Client
-	running          []TaskRun
-	completed        []TaskRun
-	failed           []TaskRun
+	needsAttention   []TaskRun // All-time runs needing attention
+	running          []TaskRun // Today's running
+	completed        []TaskRun // Today's completed (needs_attention=false)
+	failed           []TaskRun // Today's failed (needs_attention=false)
 	allRuns          []TaskRun // Combined list for navigation
 	selected         int
 	loading          bool
@@ -85,13 +86,31 @@ type TasksModal struct {
 	view             tasksView
 	detailRun        *TaskRun // Run being viewed in detail
 	pendingDismissID string   // ID of run pending dismiss (double-press confirmation)
+
+	// Pagination state
+	completedPage    int
+	completedTotal   int // Total completed items
+	failedPage       int
+	failedTotal      int // Total failed items
+
+	// History view state
+	history         []TaskRun       // Current page of history
+	historyPage     int             // Current page (0-indexed)
+	historyTotal    int             // Total history items from API
+	historyHasMore  bool            // Whether more pages are available
+	historyCursors  map[int]string  // Cursor for each page (page number -> cursor)
+	previousView    tasksView       // View to return to from detail
 }
+
+const itemsPerPage = 5
+const historyItemsPerPage = 15
 
 type tasksView int
 
 const (
 	viewTasksList tasksView = iota
 	viewTaskDetail
+	viewTasksHistory
 )
 
 // NewTasksModal creates a new tasks modal with pre-loaded task state.
@@ -104,19 +123,51 @@ func NewTasksModal(c *client.Client) *TasksModal {
 }
 
 // NewTasksModalWithState creates a new tasks modal with pre-loaded task state.
+// Note: This uses cached data as a quick preview; the modal will auto-refresh
+// to get proper needs_attention separation.
 func NewTasksModalWithState(c *client.Client, running, completed, failed []TaskRun) *TasksModal {
+	// Separate needs_attention items from the input lists
+	var needsAttention []TaskRun
+	var filteredRunning, filteredCompleted, filteredFailed []TaskRun
+
+	for _, r := range running {
+		if r.NeedsAttention {
+			needsAttention = append(needsAttention, r)
+		} else {
+			filteredRunning = append(filteredRunning, r)
+		}
+	}
+	for _, r := range completed {
+		if r.NeedsAttention {
+			needsAttention = append(needsAttention, r)
+		} else {
+			filteredCompleted = append(filteredCompleted, r)
+		}
+	}
+	for _, r := range failed {
+		if r.NeedsAttention {
+			needsAttention = append(needsAttention, r)
+		} else {
+			filteredFailed = append(filteredFailed, r)
+		}
+	}
+
 	// Sort each category by most recent first
-	sortByMostRecent(running)
-	sortByMostRecent(completed)
-	sortByMostRecent(failed)
+	sortByMostRecent(needsAttention)
+	sortByMostRecent(filteredRunning)
+	sortByMostRecent(filteredCompleted)
+	sortByMostRecent(filteredFailed)
 
 	m := &TasksModal{
-		client:    c,
-		running:   running,
-		completed: completed,
-		failed:    failed,
-		loading:   false,
-		view:      viewTasksList,
+		client:         c,
+		needsAttention: needsAttention,
+		running:        filteredRunning,
+		completed:      filteredCompleted,
+		failed:         filteredFailed,
+		completedTotal: len(filteredCompleted),
+		failedTotal:    len(filteredFailed),
+		loading:        false,
+		view:           viewTasksList,
 	}
 	m.buildAllRuns()
 	return m
@@ -124,17 +175,89 @@ func NewTasksModalWithState(c *client.Client, running, completed, failed []TaskR
 
 func (m *TasksModal) buildAllRuns() {
 	m.allRuns = nil
+	m.allRuns = append(m.allRuns, m.needsAttention...)
 	m.allRuns = append(m.allRuns, m.running...)
-	m.allRuns = append(m.allRuns, m.completed...)
-	m.allRuns = append(m.allRuns, m.failed...)
+	// Only include visible page of completed/failed
+	m.allRuns = append(m.allRuns, m.getCompletedPage()...)
+	m.allRuns = append(m.allRuns, m.getFailedPage()...)
+}
+
+func (m *TasksModal) getCompletedPage() []TaskRun {
+	start := m.completedPage * itemsPerPage
+	end := start + itemsPerPage
+	if start >= len(m.completed) {
+		return nil
+	}
+	if end > len(m.completed) {
+		end = len(m.completed)
+	}
+	return m.completed[start:end]
+}
+
+func (m *TasksModal) getFailedPage() []TaskRun {
+	start := m.failedPage * itemsPerPage
+	end := start + itemsPerPage
+	if start >= len(m.failed) {
+		return nil
+	}
+	if end > len(m.failed) {
+		end = len(m.failed)
+	}
+	return m.failed[start:end]
+}
+
+// getSelectedSection returns which section the cursor is currently in.
+func (m *TasksModal) getSelectedSection() string {
+	idx := 0
+
+	// Needs Attention section
+	if m.selected < idx+len(m.needsAttention) {
+		return "attention"
+	}
+	idx += len(m.needsAttention)
+
+	// Running section
+	if m.selected < idx+len(m.running) {
+		return "running"
+	}
+	idx += len(m.running)
+
+	// Completed section (paginated)
+	completedPage := m.getCompletedPage()
+	if m.selected < idx+len(completedPage) {
+		return "completed"
+	}
+	idx += len(completedPage)
+
+	// Failed section (paginated)
+	return "failed"
+}
+
+// getSectionStartIndex returns the index where a section starts in allRuns.
+func (m *TasksModal) getSectionStartIndex(section string) int {
+	idx := 0
+	if section == "attention" {
+		return idx
+	}
+	idx += len(m.needsAttention)
+	if section == "running" {
+		return idx
+	}
+	idx += len(m.running)
+	if section == "completed" {
+		return idx
+	}
+	idx += len(m.getCompletedPage())
+	return idx // failed
 }
 
 // TasksLoadedMsg is sent when tasks are loaded.
 type TasksLoadedMsg struct {
-	Running   []TaskRun
-	Completed []TaskRun
-	Failed    []TaskRun
-	Error     error
+	NeedsAttention []TaskRun
+	Running        []TaskRun
+	Completed      []TaskRun
+	Failed         []TaskRun
+	Error          error
 }
 
 // TaskDetailLoadedMsg is sent when full run details are loaded.
@@ -154,6 +277,16 @@ type TaskDismissedMsg struct {
 	Error error
 }
 
+// HistoryLoadedMsg is sent when history is loaded.
+type HistoryLoadedMsg struct {
+	Runs       []TaskRun
+	Total      int
+	HasMore    bool
+	NextCursor string
+	Page       int // Which page was loaded
+	Error      error
+}
+
 // DismissHintExpiredMsg is sent when the dismiss confirmation hint expires.
 type DismissHintExpiredMsg struct {
 	RunID string
@@ -170,27 +303,40 @@ func (m *TasksModal) Init() tea.Cmd {
 
 func (m *TasksModal) loadTasks() tea.Cmd {
 	return func() tea.Msg {
-		// Load today's tasks by default
 		today := time.Now().Format("2006-01-02")
-		response, err := m.client.ListRuns(&client.RunsFilter{
+
+		// Fetch all runs needing attention (any date)
+		needsAttentionFilter := true
+		attentionResp, err := m.client.ListRuns(&client.RunsFilter{
+			NeedsAttention: &needsAttentionFilter,
+		})
+		if err != nil {
+			return TasksLoadedMsg{Error: err}
+		}
+
+		// Fetch today's runs
+		todayResp, err := m.client.ListRuns(&client.RunsFilter{
 			Since: today,
 		})
 		if err != nil {
 			return TasksLoadedMsg{Error: err}
 		}
 
+		// Build needs attention list
+		var needsAttention []TaskRun
+		attentionIDs := make(map[string]bool)
+		for _, r := range attentionResp.Runs {
+			attentionIDs[r.ID] = true
+			needsAttention = append(needsAttention, clientRunToTaskRun(r))
+		}
+
+		// Build today's lists, excluding items already in needs attention
 		var running, completed, failed []TaskRun
-		for _, r := range response.Runs {
-			tr := TaskRun{
-				ID:             r.ID,
-				Workflow:       r.Workflow,
-				Status:         r.Status,
-				StartedAt:      r.StartedAt,
-				EndedAt:        r.EndedAt,
-				Error:          r.Error,
-				Result:         r.Result,
-				NeedsAttention: r.NeedsAttention,
+		for _, r := range todayResp.Runs {
+			if attentionIDs[r.ID] {
+				continue // Already in needs attention section
 			}
+			tr := clientRunToTaskRun(r)
 			if r.Status == "running" {
 				running = append(running, tr)
 			} else if isRunSuccess(r) {
@@ -201,11 +347,65 @@ func (m *TasksModal) loadTasks() tea.Cmd {
 		}
 
 		// Sort each category by most recent first
+		sortByMostRecent(needsAttention)
 		sortByMostRecent(running)
 		sortByMostRecent(completed)
 		sortByMostRecent(failed)
 
-		return TasksLoadedMsg{Running: running, Completed: completed, Failed: failed}
+		return TasksLoadedMsg{
+			NeedsAttention: needsAttention,
+			Running:        running,
+			Completed:      completed,
+			Failed:         failed,
+		}
+	}
+}
+
+func clientRunToTaskRun(r client.Run) TaskRun {
+	return TaskRun{
+		ID:             r.ID,
+		Workflow:       r.Workflow,
+		Status:         r.Status,
+		StartedAt:      r.StartedAt,
+		EndedAt:        r.EndedAt,
+		Error:          r.Error,
+		Result:         r.Result,
+		NeedsAttention: r.NeedsAttention,
+	}
+}
+
+func (m *TasksModal) loadHistory(page int) tea.Cmd {
+	// Get cursor for this page (empty string for page 0)
+	cursor := ""
+	if page > 0 {
+		cursor = m.historyCursors[page]
+	}
+
+	return func() tea.Msg {
+		filter := &client.RunsFilter{
+			Limit: historyItemsPerPage,
+		}
+		if cursor != "" {
+			filter.Cursor = cursor
+		}
+
+		resp, err := m.client.ListRuns(filter)
+		if err != nil {
+			return HistoryLoadedMsg{Error: err, Page: page}
+		}
+
+		var runs []TaskRun
+		for _, run := range resp.Runs {
+			runs = append(runs, clientRunToTaskRun(run))
+		}
+
+		return HistoryLoadedMsg{
+			Runs:       runs,
+			Total:      resp.Pagination.Total,
+			HasMore:    resp.Pagination.HasMore,
+			NextCursor: resp.Pagination.NextCursor,
+			Page:       page,
+		}
 	}
 }
 
@@ -251,9 +451,14 @@ func (m *TasksModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		if msg.Error != nil {
 			m.error = msg.Error.Error()
 		} else {
+			m.needsAttention = msg.NeedsAttention
 			m.running = msg.Running
 			m.completed = msg.Completed
 			m.failed = msg.Failed
+			m.completedPage = 0
+			m.failedPage = 0
+			m.completedTotal = len(msg.Completed)
+			m.failedTotal = len(msg.Failed)
 			m.buildAllRuns()
 			m.error = ""
 		}
@@ -288,9 +493,33 @@ func (m *TasksModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		}
 		return m, nil
 
+	case HistoryLoadedMsg:
+		m.loading = false
+		if msg.Error != nil {
+			m.error = msg.Error.Error()
+		} else {
+			m.history = msg.Runs
+			m.historyPage = msg.Page
+			m.historyTotal = msg.Total
+			m.historyHasMore = msg.HasMore
+			m.selected = 0
+			// Save cursor for the next page
+			if msg.HasMore && msg.NextCursor != "" {
+				if m.historyCursors == nil {
+					m.historyCursors = make(map[int]string)
+				}
+				m.historyCursors[msg.Page+1] = msg.NextCursor
+			}
+			m.error = ""
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		if m.view == viewTaskDetail {
 			return m.updateDetail(msg)
+		}
+		if m.view == viewTasksHistory {
+			return m.updateHistory(msg)
 		}
 		return m.updateList(msg)
 	}
@@ -317,6 +546,7 @@ func (m *TasksModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		if len(m.allRuns) > 0 && m.selected < len(m.allRuns) {
 			run := m.allRuns[m.selected]
 			m.detailRun = &run // Show basic info immediately
+			m.previousView = viewTasksList
 			m.view = viewTaskDetail
 			m.loadingDetail = true
 			// Fetch full details from API
@@ -347,6 +577,56 @@ func (m *TasksModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 				})
 			}
 		}
+	case "n":
+		// Next page - only for the section where cursor is
+		m.pendingDismissID = ""
+		section := m.getSelectedSection()
+		changed := false
+		if section == "completed" && m.completedTotal > itemsPerPage {
+			maxPage := (m.completedTotal - 1) / itemsPerPage
+			if m.completedPage < maxPage {
+				m.completedPage++
+				changed = true
+			}
+		} else if section == "failed" && m.failedTotal > itemsPerPage {
+			maxPage := (m.failedTotal - 1) / itemsPerPage
+			if m.failedPage < maxPage {
+				m.failedPage++
+				changed = true
+			}
+		}
+		if changed {
+			m.buildAllRuns()
+			// Keep selection at start of the paginated section
+			m.selected = m.getSectionStartIndex(section)
+		}
+	case "p":
+		// Previous page - only for the section where cursor is
+		m.pendingDismissID = ""
+		section := m.getSelectedSection()
+		changed := false
+		if section == "completed" && m.completedPage > 0 {
+			m.completedPage--
+			changed = true
+		} else if section == "failed" && m.failedPage > 0 {
+			m.failedPage--
+			changed = true
+		}
+		if changed {
+			m.buildAllRuns()
+			// Keep selection at start of the paginated section
+			m.selected = m.getSectionStartIndex(section)
+		}
+	case "h":
+		// Switch to history view
+		m.pendingDismissID = ""
+		m.view = viewTasksHistory
+		m.loading = true
+		m.selected = 0
+		m.history = nil
+		m.historyPage = 0
+		m.historyCursors = make(map[int]string)
+		return m, m.loadHistory(0)
 	}
 	return m, nil
 }
@@ -354,7 +634,12 @@ func (m *TasksModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 func (m *TasksModal) updateDetail(msg tea.KeyMsg) (Modal, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		m.view = viewTasksList
+		// Return to the view we came from (list or history)
+		if m.previousView == viewTasksHistory {
+			m.view = viewTasksHistory
+		} else {
+			m.view = viewTasksList
+		}
 		m.detailRun = nil
 		m.detailError = ""
 		m.pendingDismissID = ""
@@ -378,7 +663,12 @@ func (m *TasksModal) updateDetail(msg tea.KeyMsg) (Modal, tea.Cmd) {
 			runID := m.detailRun.ID // Capture ID before any state changes
 			if m.pendingDismissID == runID {
 				// Second press - actually dismiss
-				m.view = viewTasksList // Return to list after dismiss
+				// Return to the view we came from
+				if m.previousView == viewTasksHistory {
+					m.view = viewTasksHistory
+				} else {
+					m.view = viewTasksList
+				}
 				m.detailRun = nil
 				m.pendingDismissID = ""
 				return m, m.dismissTask(runID)
@@ -393,10 +683,78 @@ func (m *TasksModal) updateDetail(msg tea.KeyMsg) (Modal, tea.Cmd) {
 	return m, nil
 }
 
+func (m *TasksModal) updateHistory(msg tea.KeyMsg) (Modal, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		// Return to main list view
+		m.view = viewTasksList
+		m.selected = 0
+		m.pendingDismissID = ""
+	case "up", "k":
+		m.pendingDismissID = ""
+		if m.selected > 0 {
+			m.selected--
+		}
+	case "down", "j":
+		m.pendingDismissID = ""
+		if m.selected < len(m.history)-1 {
+			m.selected++
+		}
+	case "enter":
+		m.pendingDismissID = ""
+		if len(m.history) > 0 && m.selected < len(m.history) {
+			run := m.history[m.selected]
+			m.detailRun = &run
+			m.previousView = viewTasksHistory
+			m.view = viewTaskDetail
+			m.loadingDetail = true
+			return m, m.loadTaskDetail(run.ID)
+		}
+	case "n":
+		// Next page if available
+		m.pendingDismissID = ""
+		if m.historyHasMore && !m.loading {
+			// Check if we have cursor for next page
+			nextPage := m.historyPage + 1
+			if _, hasCursor := m.historyCursors[nextPage]; hasCursor {
+				m.loading = true
+				return m, m.loadHistory(nextPage)
+			}
+		}
+	case "p":
+		// Previous page
+		m.pendingDismissID = ""
+		if m.historyPage > 0 && !m.loading {
+			m.loading = true
+			return m, m.loadHistory(m.historyPage - 1)
+		}
+	case "d":
+		// Dismiss selected task that needs attention
+		if len(m.history) > 0 && m.selected < len(m.history) {
+			run := m.history[m.selected]
+			if run.NeedsAttention {
+				if m.pendingDismissID == run.ID {
+					// Second press - actually dismiss
+					return m, m.dismissTask(run.ID)
+				}
+				// First press - set pending and start timeout
+				m.pendingDismissID = run.ID
+				return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+					return DismissHintExpiredMsg{RunID: run.ID}
+				})
+			}
+		}
+	}
+	return m, nil
+}
+
 // Title returns the modal title.
 func (m *TasksModal) Title() string {
 	if m.view == viewTaskDetail && m.detailRun != nil {
 		return "Task: " + m.detailRun.Workflow
+	}
+	if m.view == viewTasksHistory {
+		return "Task History"
 	}
 	return "Tasks"
 }
@@ -405,6 +763,9 @@ func (m *TasksModal) Title() string {
 func (m *TasksModal) View() string {
 	if m.view == viewTaskDetail {
 		return m.viewDetail()
+	}
+	if m.view == viewTasksHistory {
+		return m.viewHistory()
 	}
 	return m.viewList()
 }
@@ -430,7 +791,7 @@ func (m *TasksModal) viewList() string {
 	if len(m.allRuns) == 0 {
 		return lipgloss.NewStyle().
 			Foreground(theme.TextSecondary).
-			Render("No tasks.")
+			Render("No tasks today.")
 	}
 
 	var lines []string
@@ -441,23 +802,50 @@ func (m *TasksModal) viewList() string {
 	normalStyle := lipgloss.NewStyle().Foreground(theme.TextPrimary)
 	attentionStyle := lipgloss.NewStyle().Foreground(theme.Warning).Bold(true)
 	timeStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+	pageStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
 	runningIndicator := lipgloss.NewStyle().Foreground(theme.Warning).Render("●")
 	completedIndicator := lipgloss.NewStyle().Foreground(theme.Success).Render("✓")
 	failedIndicator := lipgloss.NewStyle().Foreground(theme.Error).Render("✗")
 	attentionIndicator := lipgloss.NewStyle().Foreground(theme.Warning).Bold(true).Render("⚠")
 
-	// Running section
+	// Needs Attention section (all-time)
+	if len(m.needsAttention) > 0 {
+		lines = append(lines, headerStyle.Render("Needs Attention:"))
+		for _, r := range m.needsAttention {
+			name := attentionStyle.Render(r.Workflow)
+			if runIndex == m.selected {
+				name = selectedStyle.Render(r.Workflow)
+			}
+			name += " " + attentionIndicator
+
+			// Show status indicator based on run status
+			var indicator string
+			var timeText string
+			switch r.Status {
+			case "running":
+				indicator = runningIndicator
+				timeText = "Started " + formatElapsed(r.StartedAt)
+			case "completed":
+				indicator = completedIndicator
+				timeText = "Completed " + formatElapsed(r.EndedAt)
+			default:
+				indicator = failedIndicator
+				timeText = "Failed " + formatElapsed(r.EndedAt)
+			}
+			line := fmt.Sprintf("  %s %s    %s", indicator, name, timeStyle.Render(timeText))
+			lines = append(lines, line)
+			runIndex++
+		}
+		lines = append(lines, "")
+	}
+
+	// Running section (today)
 	if len(m.running) > 0 {
 		lines = append(lines, headerStyle.Render("Running:"))
 		for _, r := range m.running {
 			name := normalStyle.Render(r.Workflow)
 			if runIndex == m.selected {
 				name = selectedStyle.Render(r.Workflow)
-			} else if r.NeedsAttention {
-				name = attentionStyle.Render(r.Workflow)
-			}
-			if r.NeedsAttention {
-				name += " " + attentionIndicator
 			}
 			elapsed := formatElapsed(r.StartedAt)
 			line := fmt.Sprintf("  %s %s    %s", runningIndicator, name, timeStyle.Render("Started "+elapsed))
@@ -467,18 +855,19 @@ func (m *TasksModal) viewList() string {
 		lines = append(lines, "")
 	}
 
-	// Completed section
-	if len(m.completed) > 0 {
-		lines = append(lines, headerStyle.Render("Completed:"))
-		for _, r := range m.completed {
+	// Completed section (today, paginated)
+	completedPage := m.getCompletedPage()
+	if len(completedPage) > 0 || m.completedTotal > 0 {
+		header := "Completed:"
+		if m.completedTotal > itemsPerPage {
+			totalPages := (m.completedTotal + itemsPerPage - 1) / itemsPerPage
+			header += pageStyle.Render(fmt.Sprintf(" (page %d/%d)", m.completedPage+1, totalPages))
+		}
+		lines = append(lines, headerStyle.Render("Completed:")+pageStyle.Render(header[10:]))
+		for _, r := range completedPage {
 			name := normalStyle.Render(r.Workflow)
 			if runIndex == m.selected {
 				name = selectedStyle.Render(r.Workflow)
-			} else if r.NeedsAttention {
-				name = attentionStyle.Render(r.Workflow)
-			}
-			if r.NeedsAttention {
-				name += " " + attentionIndicator
 			}
 			elapsed := formatElapsed(r.EndedAt)
 			line := fmt.Sprintf("  %s %s    %s", completedIndicator, name, timeStyle.Render("Completed "+elapsed))
@@ -488,18 +877,19 @@ func (m *TasksModal) viewList() string {
 		lines = append(lines, "")
 	}
 
-	// Failed section
-	if len(m.failed) > 0 {
-		lines = append(lines, headerStyle.Render("Failed:"))
-		for _, r := range m.failed {
+	// Failed section (today, paginated)
+	failedPage := m.getFailedPage()
+	if len(failedPage) > 0 || m.failedTotal > 0 {
+		header := "Failed:"
+		if m.failedTotal > itemsPerPage {
+			totalPages := (m.failedTotal + itemsPerPage - 1) / itemsPerPage
+			header += pageStyle.Render(fmt.Sprintf(" (page %d/%d)", m.failedPage+1, totalPages))
+		}
+		lines = append(lines, headerStyle.Render("Failed:")+pageStyle.Render(header[7:]))
+		for _, r := range failedPage {
 			name := normalStyle.Render(r.Workflow)
 			if runIndex == m.selected {
 				name = selectedStyle.Render(r.Workflow)
-			} else if r.NeedsAttention {
-				name = attentionStyle.Render(r.Workflow)
-			}
-			if r.NeedsAttention {
-				name += " " + attentionIndicator
 			}
 			elapsed := formatElapsed(r.EndedAt)
 			errText := ""
@@ -533,6 +923,130 @@ func (m *TasksModal) viewList() string {
 		}
 		if selectedNeedsAttention {
 			hints += "  [d] Dismiss"
+		}
+		// Add pagination hints only if current section has multiple pages
+		section := m.getSelectedSection()
+		showPagination := false
+		if section == "completed" && m.completedTotal > itemsPerPage {
+			showPagination = true
+		} else if section == "failed" && m.failedTotal > itemsPerPage {
+			showPagination = true
+		}
+		if showPagination {
+			hints += "  [n/p] Next/Prev page"
+		}
+		hints += "  [h] History"
+		lines = append(lines, hintStyle.Render(hints))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (m *TasksModal) viewHistory() string {
+	if m.loading {
+		return lipgloss.NewStyle().
+			Foreground(theme.TextSecondary).
+			Render("Loading history...")
+	}
+
+	if m.error != "" {
+		errorStyle := lipgloss.NewStyle().Foreground(theme.Error)
+		hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			errorStyle.Render("Error: "+m.error),
+			"",
+			hintStyle.Render("[Esc] Back  [r] Retry"),
+		)
+	}
+
+	if len(m.history) == 0 {
+		hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			lipgloss.NewStyle().Foreground(theme.TextSecondary).Render("No task history."),
+			"",
+			hintStyle.Render("[Esc] Back"),
+		)
+	}
+
+	var lines []string
+
+	selectedStyle := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
+	normalStyle := lipgloss.NewStyle().Foreground(theme.TextPrimary)
+	attentionStyle := lipgloss.NewStyle().Foreground(theme.Warning).Bold(true)
+	timeStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+	pageStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+	runningIndicator := lipgloss.NewStyle().Foreground(theme.Warning).Render("●")
+	completedIndicator := lipgloss.NewStyle().Foreground(theme.Success).Render("✓")
+	failedIndicator := lipgloss.NewStyle().Foreground(theme.Error).Render("✗")
+	attentionIndicator := lipgloss.NewStyle().Foreground(theme.Warning).Bold(true).Render("⚠")
+
+	// Show range and total count
+	startItem := m.historyPage*historyItemsPerPage + 1
+	endItem := startItem + len(m.history) - 1
+	countText := fmt.Sprintf("Showing %d-%d of %d tasks", startItem, endItem, m.historyTotal)
+	lines = append(lines, pageStyle.Render(countText))
+	lines = append(lines, "")
+
+	// Render history list
+	for i, r := range m.history {
+		name := normalStyle.Render(r.Workflow)
+		if r.NeedsAttention {
+			name = attentionStyle.Render(r.Workflow)
+		}
+		if i == m.selected {
+			name = selectedStyle.Render(r.Workflow)
+		}
+
+		// Add attention indicator after name if needed
+		if r.NeedsAttention {
+			name += " " + attentionIndicator
+		}
+
+		// Determine status indicator and time text
+		var indicator string
+		var timeText string
+		switch r.Status {
+		case "running":
+			indicator = runningIndicator
+			timeText = "Started " + formatElapsed(r.StartedAt)
+		case "completed":
+			indicator = completedIndicator
+			timeText = "Completed " + formatElapsed(r.EndedAt)
+		default:
+			indicator = failedIndicator
+			timeText = "Failed " + formatElapsed(r.EndedAt)
+		}
+
+		line := fmt.Sprintf("  %s %s    %s", indicator, name, timeStyle.Render(timeText))
+		lines = append(lines, line)
+	}
+
+	lines = append(lines, "")
+
+	// Hints
+	hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+	warningHintStyle := lipgloss.NewStyle().Foreground(theme.Warning)
+
+	// Check if selected task needs attention for dismiss hint
+	var selectedNeedsAttention bool
+	if len(m.history) > 0 && m.selected < len(m.history) {
+		selectedNeedsAttention = m.history[m.selected].NeedsAttention
+	}
+
+	if m.pendingDismissID != "" {
+		lines = append(lines, warningHintStyle.Render("Press d again to dismiss"))
+	} else {
+		hints := "[Esc] Back  [Enter] Details"
+		if selectedNeedsAttention {
+			hints += "  [d] Dismiss"
+		}
+		// Show pagination hints if there are multiple pages
+		hasNextPage := m.historyHasMore
+		hasPrevPage := m.historyPage > 0
+		if hasNextPage || hasPrevPage {
+			hints += "  [n/p] Next/Prev page"
 		}
 		lines = append(lines, hintStyle.Render(hints))
 	}
@@ -630,27 +1144,42 @@ func (m *TasksModal) cancelTask(runID string) tea.Cmd {
 		if err != nil {
 			return TasksLoadedMsg{Error: err}
 		}
-		// Reload today's tasks after cancel
+
+		// Reload tasks after cancel using the same logic as loadTasks
 		today := time.Now().Format("2006-01-02")
-		response, err := m.client.ListRuns(&client.RunsFilter{
+
+		// Fetch all runs needing attention (any date)
+		needsAttentionFilter := true
+		attentionResp, err := m.client.ListRuns(&client.RunsFilter{
+			NeedsAttention: &needsAttentionFilter,
+		})
+		if err != nil {
+			return TasksLoadedMsg{Error: err}
+		}
+
+		// Fetch today's runs
+		todayResp, err := m.client.ListRuns(&client.RunsFilter{
 			Since: today,
 		})
 		if err != nil {
 			return TasksLoadedMsg{Error: err}
 		}
 
+		// Build needs attention list
+		var needsAttention []TaskRun
+		attentionIDs := make(map[string]bool)
+		for _, r := range attentionResp.Runs {
+			attentionIDs[r.ID] = true
+			needsAttention = append(needsAttention, clientRunToTaskRun(r))
+		}
+
+		// Build today's lists, excluding items already in needs attention
 		var running, completed, failed []TaskRun
-		for _, r := range response.Runs {
-			tr := TaskRun{
-				ID:             r.ID,
-				Workflow:       r.Workflow,
-				Status:         r.Status,
-				StartedAt:      r.StartedAt,
-				EndedAt:        r.EndedAt,
-				Error:          r.Error,
-				Result:         r.Result,
-				NeedsAttention: r.NeedsAttention,
+		for _, r := range todayResp.Runs {
+			if attentionIDs[r.ID] {
+				continue
 			}
+			tr := clientRunToTaskRun(r)
 			if r.Status == "running" {
 				running = append(running, tr)
 			} else if isRunSuccess(r) {
@@ -660,12 +1189,17 @@ func (m *TasksModal) cancelTask(runID string) tea.Cmd {
 			}
 		}
 
-		// Sort each category by most recent first
+		sortByMostRecent(needsAttention)
 		sortByMostRecent(running)
 		sortByMostRecent(completed)
 		sortByMostRecent(failed)
 
-		return TasksLoadedMsg{Running: running, Completed: completed, Failed: failed}
+		return TasksLoadedMsg{
+			NeedsAttention: needsAttention,
+			Running:        running,
+			Completed:      completed,
+			Failed:         failed,
+		}
 	}
 }
 

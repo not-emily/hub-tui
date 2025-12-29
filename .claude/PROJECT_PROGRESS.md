@@ -104,6 +104,17 @@ None
   - Fixed API parsing (active + history arrays)
   - Task categorization by status AND result.success
   - Load task history from hub-core on startup
+- Tasks modal enhancements
+  - Added "Needs Attention" section at top (all-time, needs_attention=true filter)
+  - Status bar shows attention count with proper grammar ("1 task needs attention")
+  - Items only appear in one section (not duplicated across Needs Attention and Completed/Failed)
+  - Added pagination for Completed/Failed sections (5 items per page)
+  - Context-aware pagination (n/p keys only paginate current section)
+  - Pagination hints only show when section has multiple pages
+  - Added History view with [h] key (15 items per page, all-time)
+  - History uses page-based navigation with cursor caching
+  - Dismiss support in history view
+  - Proper navigation back from detail view (returns to list or history)
 
 ## Future Enhancements (not in current plan)
 - Workflow enable/disable toggle (API: PUT /workflows/{name})
