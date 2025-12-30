@@ -65,6 +65,24 @@ func (c *Client) post(path string, body io.Reader) (*http.Response, error) {
 	return c.do(req)
 }
 
+// put performs a PUT request with JSON body.
+func (c *Client) put(path string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPut, c.baseURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	return c.do(req)
+}
+
+// delete performs a DELETE request.
+func (c *Client) delete(path string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodDelete, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.do(req)
+}
+
 // Health checks if the server is reachable.
 func (c *Client) Health() error {
 	resp, err := c.get("/health")

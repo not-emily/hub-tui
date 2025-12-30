@@ -54,7 +54,7 @@ func (m *HelpModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 
 // contentLen returns the number of lines in the help content.
 func (m *HelpModal) contentLen() int {
-	return 26 // Update this if content changes
+	return 27 // Update this if content changes
 }
 
 // Title returns the modal title.
@@ -83,6 +83,7 @@ func (m *HelpModal) View() string {
 		cmdStyle.Render("  /hub        ") + descStyle.Render("  Return to hub context"),
 		cmdStyle.Render("  /modules    ") + descStyle.Render("  Manage modules"),
 		cmdStyle.Render("  /integrations") + descStyle.Render(" Configure integrations"),
+		cmdStyle.Render("  /llm        ") + descStyle.Render("  Manage LLM profiles"),
 		cmdStyle.Render("  /workflows  ") + descStyle.Render("  Browse workflows"),
 		cmdStyle.Render("  /tasks      ") + descStyle.Render("  View tasks"),
 		cmdStyle.Render("  /settings   ") + descStyle.Render("  Settings"),

@@ -306,6 +306,74 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case modal.LLMProfilesLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMProfileTestedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMProfileDeletedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMDefaultSetMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMProfileSavedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMIntegrationsLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMOpenIntegrationsMsg:
+		// Close LLM modal and open integrations modal
+		m.modal.Close()
+		return m, m.modal.Open(modal.NewIntegrationsModal(m.client))
+
+	case modal.LLMModelsLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
 	case WorkflowStartedMsg:
 		return m.handleWorkflowStarted(msg)
 
@@ -412,11 +480,11 @@ func (m Model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if startsWithAt {
 				// @ prefix: always route through /ask (let hub-core decide)
 				return m, m.doAsk(input)
-			} else if m.context.Target != "" {
-				// No @ prefix but have target: send directly to assistant
+			} else if m.context.Type == "assistant" && m.context.Target != "" {
+				// No @ prefix but in assistant context: send directly to assistant
 				return m, m.doAssistantChat(m.context.Target, input)
 			} else {
-				// No @ prefix, no target: send to /ask
+				// No @ prefix, no assistant context: send to /ask
 				return m, m.doAsk(input)
 			}
 		}
@@ -491,6 +559,9 @@ func (m Model) handleCommand(cmd *chat.Command) (tea.Model, tea.Cmd) {
 
 	case "integrations":
 		return m, m.modal.Open(modal.NewIntegrationsModal(m.client))
+
+	case "llm":
+		return m, m.modal.Open(modal.NewLLMModal(m.client))
 
 	case "tasks":
 		// Convert app.Run to modal.TaskRun

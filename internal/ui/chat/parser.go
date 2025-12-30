@@ -27,6 +27,7 @@ var KnownCommands = []string{
 	"refresh",
 	"modules",
 	"integrations",
+	"llm",
 	"workflows",
 	"tasks",
 	"settings",

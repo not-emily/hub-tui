@@ -9,6 +9,7 @@ import (
 // Integration represents an integration from hub-core.
 type Integration struct {
 	Name           string   `json:"name"`
+	Type           string   `json:"type"` // "llm" or "api"
 	Description    string   `json:"description"`
 	Configured     bool     `json:"configured"`
 	Profiles       []string `json:"profiles"`        // Configured profile names
@@ -82,4 +83,61 @@ func (c *Client) TestIntegration(name string) error {
 		return parseError(resp)
 	}
 	return nil
+}
+
+// ModelInfo represents information about an available model.
+type ModelInfo struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	ContextLength int    `json:"context_length"`
+}
+
+// ModelsPagination contains pagination info for models list.
+type ModelsPagination struct {
+	Total      int    `json:"total"`
+	Limit      int    `json:"limit"`
+	HasMore    bool   `json:"has_more"`
+	NextCursor string `json:"next_cursor"`
+}
+
+// ModelsResult contains the paginated models response.
+type ModelsResult struct {
+	Models     []ModelInfo
+	Pagination ModelsPagination
+}
+
+// modelsResponse is the API response for listing models.
+type modelsResponse struct {
+	Integration string           `json:"integration"`
+	Models      []ModelInfo      `json:"models"`
+	Pagination  ModelsPagination `json:"pagination"`
+}
+
+// ListIntegrationModels fetches available models for an integration with pagination.
+func (c *Client) ListIntegrationModels(name string, limit int, cursor string) (*ModelsResult, error) {
+	path := "/integrations/" + name + "/models?limit=" + fmt.Sprintf("%d", limit)
+	if cursor != "" {
+		path += "&cursor=" + cursor
+	}
+
+	resp, err := c.get(path)
+	if err != nil {
+		return nil, fmt.Errorf("cannot connect to server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, parseError(resp)
+	}
+
+	var result modelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("invalid response from server: %w", err)
+	}
+
+	return &ModelsResult{
+		Models:     result.Models,
+		Pagination: result.Pagination,
+	}, nil
 }

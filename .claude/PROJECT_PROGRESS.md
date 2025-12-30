@@ -1,120 +1,44 @@
 # Project Progress - hub-tui
 
 ## Plan Files
-Roadmap: None
-Current Phase: None
-Latest Weekly Report: None
+Roadmap: [plan.md](../docs/plan/plan.md)
+Current Phase: [phase-4.md](../docs/plan/phases/phase-4.md) ✓ Complete
+Latest Weekly Report: [weekly-2025-W52.md](../docs/reports/weekly-2025-W52.md)
 Archived: [v1-initial-build](../docs/plan/_archived/v1-initial-build/)
 
-Last Updated: 2025-12-28
+Last Updated: 2025-12-30
 
 ## Current Focus
-Plan complete! All phases finished.
+LLM Profile Management - All phases complete with enhancements.
 
 ## Active Tasks
-None
+None - all planned phases complete!
 
 ## Open Questions/Blockers
 None
 
 ## Completed This Week
-- Phase 1: Foundation
-  - Initialized Go module with Bubble Tea & Lip Gloss
-  - Created project directory structure
-  - Implemented config loading/saving (~/.config/hub-tui/config.json)
-  - Created dark theme with gray color palette
-  - Built root Bubble Tea app with double Ctrl+C quit
-  - Added keymap and message types
-  - Created build.sh and run.sh scripts
-  - Verified build with go vet and go build
-- Phase 2: API Client & Connection
-  - Created HTTP client with auth header injection
-  - Implemented login endpoint and token validation
-  - Built login flow UI (server URL, username, password)
-  - Added JWT token expiry detection
-  - Created status bar component (connected/disconnected)
-  - Integrated login flow into app startup
-  - Health check on startup verifies connection
-- UI styling fixes
-  - Fixed gray bar artifacts using WithWhitespaceBackground in Place()
-  - Established pattern: explicit Background(theme.Background) on text elements
-  - Avoid JoinVertical with centering; use string concatenation instead
-  - Added dynamic Ctrl+C hint to login page
-- Phase 3: Chat Interface
-  - Created chat view with scrollable message list
-  - Built input component with multi-line support (Ctrl+J for newline)
-  - Implemented /ask endpoint with SSE streaming
-  - Added streaming response display with ▌ indicator
-  - Message styling differentiates user vs hub
-  - Keyboard navigation: Up/Down scroll, PgUp/PgDn for faster scroll
-  - Auto-scroll to bottom on new messages
-  - Cancel streaming with Ctrl+C
-- Phase 4: Commands & Autocomplete
-  - Created input parser for @, #, / prefix detection
-  - Implemented slash commands: /exit, /clear, /help, /refresh
-  - Added API client endpoints for assistants, workflows, modules
-  - Built cache system with startup fetch and /refresh support
-  - Implemented tab autocomplete with popup menu
-  - Arrow key navigation and Enter to complete
-- Phase 5: Assistant Context
-  - Updated SSE parser to handle route/chunk/done events
-  - Added RouteMsg to capture routing info from hub-core
-  - Track current context (type, target) in app model
-  - Status bar shows @assistant indicator when in context
-  - Colored border around chat when in assistant mode
-- Phase 5 Enhancements (UI polish & routing)
-  - Markdown rendering for hub responses using glamour with custom zero-margin style
-  - Changed message indicators from "You:"/"Hub:" to "›"/"●" with colors
-  - Hub indicator changed from green to white for cleaner look
-  - Sticky target routing: messages without @ prefix go to current assistant
-  - Added /hub slash command to return to main hub context
-  - Input area shows colored top/bottom lines when in assistant context
-  - Fixed non-streaming response handling (utility, module, workflow, unknown route types now display correctly)
-  - AssistantChat client method for direct /assistants/{name}/chat endpoint
-- Phase 6.1: Modal Framework
-  - Created inline modal framework (renders between chat and input)
-  - Built reusable list component with j/k navigation
-  - Implemented /help modal with commands and keyboard shortcuts
-  - Implemented /settings modal displaying config and connection status
-  - Modal has rounded border with title bar and "Esc to close" hint
-  - Integrated modals into app.go with keyboard routing
-  - Decision: Use inline modals instead of overlay (see DECISIONS.md)
-- Phase 6.2: Resource Modals
-  - Implemented /modules modal with list display and enable/disable toggle
-  - Added EnableModule/DisableModule client endpoints
-  - Implemented /workflows modal with list display and descriptions
-  - Created reusable form component with password masking and cursor support
-  - Created integrations client with configure and test endpoints
-  - Implemented /integrations modal with 3-level view (list → profiles → configure)
-  - Profile support: multiple accounts per integration, new profile creation
-  - Fixed paste handling: use tea.KeyRunes instead of msg.String() for proper paste
-  - Fixed modal navigation: q closes modal, Esc goes back within modal
-  - Auth expiry handling: detect 401 errors, redirect to login automatically
-  - Wired up all modals in app.go with async message handling
-  - Tested all resource modals (modules, workflows, integrations)
-- Phase 7: Background Tasks
-  - Created runs client with ListRuns, GetRun, RunWorkflow, CancelRun
-  - Added task-related messages (WorkflowStartedMsg, TaskStatusMsg, etc.)
-  - Status bar shows running/failed task counts
-  - #workflow triggers workflow in background
-  - Polling every 3 seconds while tasks running
-  - Completion/failure notifications in chat
-  - /tasks modal with Running, Completed, Failed sections
-  - Task detail view with step outputs
-  - Fixed API parsing (active + history arrays)
-  - Task categorization by status AND result.success
-  - Load task history from hub-core on startup
-- Tasks modal enhancements
-  - Added "Needs Attention" section at top (all-time, needs_attention=true filter)
-  - Status bar shows attention count with proper grammar ("1 task needs attention")
-  - Items only appear in one section (not duplicated across Needs Attention and Completed/Failed)
-  - Added pagination for Completed/Failed sections (5 items per page)
-  - Context-aware pagination (n/p keys only paginate current section)
-  - Pagination hints only show when section has multiple pages
-  - Added History view with [h] key (15 items per page, all-time)
-  - History uses page-based navigation with cursor caching
-  - Dismiss support in history view
-  - Proper navigation back from detail view (returns to list or history)
+- Phase 1: Client Layer
+  - Created internal/client/llm.go
+  - Added LLMProfile, LLMProfileList, LLMTestResult types
+  - Implemented ListLLMProfiles, Create/Update/Delete, Test, SetDefault methods
+  - Added put() and delete() helper methods to client.go
+- Phase 2: Modal List View
+  - Created internal/ui/modal/llm.go with list view
+  - Name (★ default), Model, Provider columns
+  - Test, delete, set-default, refresh functionality
+- Phase 3: Modal Edit/Create View
+  - Added edit/create forms with validation
+  - "+ New Profile" menu option
+- Phase 4: App Integration
+  - Wired /llm command into app.go
+  - Added message handlers with auth expiry handling
+  - Updated help modal and autocomplete
+- Enhancement: Form Select Fields
+  - Extended components/form.go with FieldSelect type
+  - Added SetFieldOptions, GetFieldValue methods
+  - LLM modal uses select fields for Integration and Integration Profile
+  - Dynamic profile updates when integration selection changes
 
 ## Future Enhancements (not in current plan)
 - Workflow enable/disable toggle (API: PUT /workflows/{name})
@@ -122,4 +46,4 @@ None
 - Integration profile rename/delete (requires hub-core API additions)
 
 ## Next Session
-All planned phases complete!
+LLM Profile Management feature complete! Ready for testing or next feature.

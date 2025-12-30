@@ -251,15 +251,17 @@ func (m *IntegrationsModal) updateConfigure(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		m.form = nil
 		m.error = ""
 		return m, nil
+	case "ctrl+s":
+		if !m.saving && m.form != nil {
+			m.saving = true
+			return m, m.configureIntegration()
+		}
+		return m, nil
 	}
 
 	// Forward to form
 	if m.form != nil {
-		submit := m.form.Update(msg)
-		if submit && !m.saving {
-			m.saving = true
-			return m, m.configureIntegration()
-		}
+		m.form.Update(msg)
 	}
 	return m, nil
 }
@@ -508,7 +510,7 @@ func (m *IntegrationsModal) viewConfigureContent() string {
 	// Add hints
 	lines = append(lines, "")
 	legendStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
-	lines = append(lines, legendStyle.Render("  [Enter] Save  [Esc] Back"))
+	lines = append(lines, legendStyle.Render("  [Ctrl+S] Save  [Esc] Back"))
 
 	return strings.Join(lines, "\n")
 }
