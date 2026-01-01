@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/pxp/hub-tui/internal/client"
+	"github.com/pxp/hub-tui/internal/ui/components"
 	"github.com/pxp/hub-tui/internal/ui/theme"
 )
 
@@ -82,10 +83,10 @@ type TasksModal struct {
 	loading          bool
 	loadingDetail    bool   // Loading full run details
 	error            string // Error loading task list
-	detailError      string // Error loading task details
-	view             tasksView
-	detailRun        *TaskRun // Run being viewed in detail
-	pendingDismissID string   // ID of run pending dismiss (double-press confirmation)
+	detailError string    // Error loading task details
+	view        tasksView
+	detailRun   *TaskRun // Run being viewed in detail
+	confirm     *components.Confirmation
 
 	// Pagination state
 	completedPage    int
@@ -119,6 +120,7 @@ func NewTasksModal(c *client.Client) *TasksModal {
 		client:  c,
 		loading: true,
 		view:    viewTasksList,
+		confirm: components.NewConfirmation(),
 	}
 }
 
@@ -168,6 +170,7 @@ func NewTasksModalWithState(c *client.Client, running, completed, failed []TaskR
 		failedTotal:    len(filteredFailed),
 		loading:        false,
 		view:           viewTasksList,
+		confirm:        components.NewConfirmation(),
 	}
 	m.buildAllRuns()
 	return m
@@ -285,11 +288,6 @@ type HistoryLoadedMsg struct {
 	NextCursor string
 	Page       int // Which page was loaded
 	Error      error
-}
-
-// DismissHintExpiredMsg is sent when the dismiss confirmation hint expires.
-type DismissHintExpiredMsg struct {
-	RunID string
 }
 
 // Init initializes the modal.
@@ -477,7 +475,7 @@ func (m *TasksModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 
 	case TaskDismissedMsg:
 		// Clear pending dismiss state
-		m.pendingDismissID = ""
+		m.confirm.Clear()
 		if msg.Error != nil {
 			m.error = msg.Error.Error()
 		} else {
@@ -486,11 +484,8 @@ func (m *TasksModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		}
 		return m, nil
 
-	case DismissHintExpiredMsg:
-		// Only clear if it's still the same pending dismiss
-		if m.pendingDismissID == msg.RunID {
-			m.pendingDismissID = ""
-		}
+	case components.ConfirmationExpiredMsg:
+		m.confirm.HandleExpired(msg)
 		return m, nil
 
 	case HistoryLoadedMsg:
@@ -529,20 +524,20 @@ func (m *TasksModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 func (m *TasksModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		m.pendingDismissID = "" // Clear pending dismiss on escape
-		return nil, nil         // Close modal
+		m.confirm.Clear()
+		return nil, nil // Close modal
 	case "up", "k":
-		m.pendingDismissID = "" // Clear pending dismiss on navigation
+		m.confirm.Clear()
 		if m.selected > 0 {
 			m.selected--
 		}
 	case "down", "j":
-		m.pendingDismissID = "" // Clear pending dismiss on navigation
+		m.confirm.Clear()
 		if m.selected < len(m.allRuns)-1 {
 			m.selected++
 		}
 	case "enter":
-		m.pendingDismissID = "" // Clear pending dismiss
+		m.confirm.Clear()
 		if len(m.allRuns) > 0 && m.selected < len(m.allRuns) {
 			run := m.allRuns[m.selected]
 			m.detailRun = &run // Show basic info immediately
@@ -553,7 +548,7 @@ func (m *TasksModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 			return m, m.loadTaskDetail(run.ID)
 		}
 	case "c":
-		m.pendingDismissID = "" // Clear pending dismiss
+		m.confirm.Clear()
 		// Cancel selected running task
 		if len(m.allRuns) > 0 && m.selected < len(m.allRuns) {
 			run := m.allRuns[m.selected]
@@ -566,20 +561,16 @@ func (m *TasksModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		if len(m.allRuns) > 0 && m.selected < len(m.allRuns) {
 			run := m.allRuns[m.selected]
 			if run.NeedsAttention {
-				if m.pendingDismissID == run.ID {
-					// Second press - actually dismiss
+				if execute, cmd := m.confirm.Check("dismiss", run.ID); execute {
 					return m, m.dismissTask(run.ID)
+				} else if cmd != nil {
+					return m, cmd
 				}
-				// First press - set pending and start timeout
-				m.pendingDismissID = run.ID
-				return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
-					return DismissHintExpiredMsg{RunID: run.ID}
-				})
 			}
 		}
 	case "n":
 		// Next page - only for the section where cursor is
-		m.pendingDismissID = ""
+		m.confirm.Clear()
 		section := m.getSelectedSection()
 		changed := false
 		if section == "completed" && m.completedTotal > itemsPerPage {
@@ -602,7 +593,7 @@ func (m *TasksModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		}
 	case "p":
 		// Previous page - only for the section where cursor is
-		m.pendingDismissID = ""
+		m.confirm.Clear()
 		section := m.getSelectedSection()
 		changed := false
 		if section == "completed" && m.completedPage > 0 {
@@ -619,7 +610,7 @@ func (m *TasksModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		}
 	case "h":
 		// Switch to history view
-		m.pendingDismissID = ""
+		m.confirm.Clear()
 		m.view = viewTasksHistory
 		m.loading = true
 		m.selected = 0
@@ -642,9 +633,9 @@ func (m *TasksModal) updateDetail(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		}
 		m.detailRun = nil
 		m.detailError = ""
-		m.pendingDismissID = ""
+		m.confirm.Clear()
 	case "r":
-		m.pendingDismissID = "" // Clear pending dismiss
+		m.confirm.Clear()
 		// Refresh details
 		if m.detailRun != nil && !m.loadingDetail {
 			m.loadingDetail = true
@@ -652,7 +643,7 @@ func (m *TasksModal) updateDetail(msg tea.KeyMsg) (Modal, tea.Cmd) {
 			return m, m.loadTaskDetail(m.detailRun.ID)
 		}
 	case "c":
-		m.pendingDismissID = "" // Clear pending dismiss
+		m.confirm.Clear()
 		// Cancel if running
 		if m.detailRun != nil && m.detailRun.Status == "running" {
 			return m, m.cancelTask(m.detailRun.ID)
@@ -660,9 +651,8 @@ func (m *TasksModal) updateDetail(msg tea.KeyMsg) (Modal, tea.Cmd) {
 	case "d":
 		// Dismiss if needs attention
 		if m.detailRun != nil && m.detailRun.NeedsAttention {
-			runID := m.detailRun.ID // Capture ID before any state changes
-			if m.pendingDismissID == runID {
-				// Second press - actually dismiss
+			runID := m.detailRun.ID
+			if execute, cmd := m.confirm.Check("dismiss", runID); execute {
 				// Return to the view we came from
 				if m.previousView == viewTasksHistory {
 					m.view = viewTasksHistory
@@ -670,14 +660,10 @@ func (m *TasksModal) updateDetail(msg tea.KeyMsg) (Modal, tea.Cmd) {
 					m.view = viewTasksList
 				}
 				m.detailRun = nil
-				m.pendingDismissID = ""
 				return m, m.dismissTask(runID)
+			} else if cmd != nil {
+				return m, cmd
 			}
-			// First press - set pending and start timeout
-			m.pendingDismissID = runID
-			return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
-				return DismissHintExpiredMsg{RunID: runID}
-			})
 		}
 	}
 	return m, nil
@@ -689,19 +675,19 @@ func (m *TasksModal) updateHistory(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		// Return to main list view
 		m.view = viewTasksList
 		m.selected = 0
-		m.pendingDismissID = ""
+		m.confirm.Clear()
 	case "up", "k":
-		m.pendingDismissID = ""
+		m.confirm.Clear()
 		if m.selected > 0 {
 			m.selected--
 		}
 	case "down", "j":
-		m.pendingDismissID = ""
+		m.confirm.Clear()
 		if m.selected < len(m.history)-1 {
 			m.selected++
 		}
 	case "enter":
-		m.pendingDismissID = ""
+		m.confirm.Clear()
 		if len(m.history) > 0 && m.selected < len(m.history) {
 			run := m.history[m.selected]
 			m.detailRun = &run
@@ -712,7 +698,7 @@ func (m *TasksModal) updateHistory(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		}
 	case "n":
 		// Next page if available
-		m.pendingDismissID = ""
+		m.confirm.Clear()
 		if m.historyHasMore && !m.loading {
 			// Check if we have cursor for next page
 			nextPage := m.historyPage + 1
@@ -723,7 +709,7 @@ func (m *TasksModal) updateHistory(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		}
 	case "p":
 		// Previous page
-		m.pendingDismissID = ""
+		m.confirm.Clear()
 		if m.historyPage > 0 && !m.loading {
 			m.loading = true
 			return m, m.loadHistory(m.historyPage - 1)
@@ -733,15 +719,11 @@ func (m *TasksModal) updateHistory(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		if len(m.history) > 0 && m.selected < len(m.history) {
 			run := m.history[m.selected]
 			if run.NeedsAttention {
-				if m.pendingDismissID == run.ID {
-					// Second press - actually dismiss
+				if execute, cmd := m.confirm.Check("dismiss", run.ID); execute {
 					return m, m.dismissTask(run.ID)
+				} else if cmd != nil {
+					return m, cmd
 				}
-				// First press - set pending and start timeout
-				m.pendingDismissID = run.ID
-				return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
-					return DismissHintExpiredMsg{RunID: run.ID}
-				})
 			}
 		}
 	}
@@ -914,7 +896,7 @@ func (m *TasksModal) viewList() string {
 	}
 
 	// Check for pending dismiss confirmation
-	if m.pendingDismissID != "" {
+	if m.confirm.IsPending("dismiss", "") {
 		lines = append(lines, warningHintStyle.Render("Press d again to dismiss"))
 	} else {
 		hints := "[Enter] Details"
@@ -1035,7 +1017,7 @@ func (m *TasksModal) viewHistory() string {
 		selectedNeedsAttention = m.history[m.selected].NeedsAttention
 	}
 
-	if m.pendingDismissID != "" {
+	if m.confirm.IsPending("dismiss", "") {
 		lines = append(lines, warningHintStyle.Render("Press d again to dismiss"))
 	} else {
 		hints := "[Esc] Back  [Enter] Details"
@@ -1121,7 +1103,7 @@ func (m *TasksModal) viewDetail() string {
 	warningHintStyle := lipgloss.NewStyle().Foreground(theme.Warning)
 
 	// Check for pending dismiss confirmation
-	if m.pendingDismissID == r.ID {
+	if m.confirm.IsPending("dismiss", r.ID) {
 		lines = append(lines, warningHintStyle.Render("Press d again to dismiss"))
 	} else {
 		hints := "[Esc] Back  [r] Refresh"

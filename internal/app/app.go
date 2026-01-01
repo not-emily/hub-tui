@@ -10,6 +10,7 @@ import (
 	"github.com/pxp/hub-tui/internal/client"
 	"github.com/pxp/hub-tui/internal/config"
 	"github.com/pxp/hub-tui/internal/ui/chat"
+	"github.com/pxp/hub-tui/internal/ui/components"
 	"github.com/pxp/hub-tui/internal/ui/login"
 	"github.com/pxp/hub-tui/internal/ui/modal"
 	"github.com/pxp/hub-tui/internal/ui/status"
@@ -300,7 +301,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
-	case modal.DismissHintExpiredMsg:
+	case components.ConfirmationExpiredMsg:
 		if m.modal.IsOpen() {
 			_, cmd := m.modal.UpdateMsg(msg)
 			return m, cmd

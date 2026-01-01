@@ -13,9 +13,10 @@ import (
 type FieldType int
 
 const (
-	FieldText   FieldType = iota // Text input field
-	FieldSelect                  // Selection field with options
-	FieldButton                  // Button (e.g., Save, Cancel)
+	FieldText     FieldType = iota // Text input field
+	FieldSelect                    // Selection field with options
+	FieldButton                    // Button (e.g., Save, Cancel)
+	FieldCheckbox                  // Checkbox (toggle with space or enter)
 )
 
 // FormField represents a single form field.
@@ -28,6 +29,7 @@ type FormField struct {
 	Options         []string        // For select fields: available options
 	Selected        int             // For select fields: currently selected index
 	DisabledOptions map[string]bool // For select fields: options that are disabled (grayed out)
+	Checked         bool            // For checkbox fields: whether the checkbox is checked
 }
 
 // Form is a reusable form component.
@@ -67,6 +69,8 @@ func (f *Form) Update(msg tea.KeyMsg) bool {
 		return f.updateSelect(msg)
 	case FieldButton:
 		return f.updateButton(msg)
+	case FieldCheckbox:
+		return f.updateCheckbox(msg)
 	default:
 		return f.updateText(msg)
 	}
@@ -134,6 +138,26 @@ func (f *Form) updateButton(msg tea.KeyMsg) bool {
 		f.cursor = len(f.Fields[f.focused].Value)
 	case tea.KeyEnter:
 		return true
+	}
+	return false
+}
+
+// updateCheckbox handles input for checkbox fields.
+func (f *Form) updateCheckbox(msg tea.KeyMsg) bool {
+	field := &f.Fields[f.focused]
+
+	switch msg.Type {
+	case tea.KeyTab:
+		f.focused = (f.focused + 1) % len(f.Fields)
+		f.cursor = len(f.Fields[f.focused].Value)
+	case tea.KeyShiftTab, tea.KeyUp:
+		f.focused = (f.focused - 1 + len(f.Fields)) % len(f.Fields)
+		f.cursor = len(f.Fields[f.focused].Value)
+	case tea.KeyDown:
+		f.focused = (f.focused + 1) % len(f.Fields)
+		f.cursor = len(f.Fields[f.focused].Value)
+	case tea.KeySpace, tea.KeyEnter:
+		field.Checked = !field.Checked
 	}
 	return false
 }
@@ -214,6 +238,16 @@ func (f *Form) GetFieldValue(key string) string {
 	return ""
 }
 
+// GetFieldChecked returns whether a checkbox field is checked.
+func (f *Form) GetFieldChecked(key string) bool {
+	for _, field := range f.Fields {
+		if field.Key == key {
+			return field.Checked
+		}
+	}
+	return false
+}
+
 // SetFieldDisabledOptions sets which options are disabled for a select field.
 func (f *Form) SetFieldDisabledOptions(key string, disabled map[string]bool) {
 	for i := range f.Fields {
@@ -274,6 +308,8 @@ func (f *Form) View() string {
 			lines = append(lines, f.renderSelectField(field, isFocused, labelStyle, valueStyle, focusedValueStyle, optionStyle, selectedOptionStyle, disabledStyle)...)
 		case FieldButton:
 			lines = append(lines, f.renderButtonField(field, isFocused, focusedValueStyle, labelStyle))
+		case FieldCheckbox:
+			lines = append(lines, f.renderCheckboxField(field, isFocused, labelStyle, focusedValueStyle))
 		default:
 			lines = append(lines, f.renderTextField(field, isFocused, labelStyle, valueStyle, focusedValueStyle, cursorStyle))
 		}
@@ -378,4 +414,20 @@ func (f *Form) renderButtonField(field FormField, isFocused bool, focusedStyle, 
 		return "  " + focusedStyle.Render("[ "+label+" ]")
 	}
 	return "  " + normalStyle.Render("[ "+label+" ]")
+}
+
+// renderCheckboxField renders a checkbox field.
+func (f *Form) renderCheckboxField(field FormField, isFocused bool, labelStyle, focusedStyle lipgloss.Style) string {
+	// Checkbox indicator: [x] for checked, [ ] for unchecked
+	var checkbox string
+	if field.Checked {
+		checkbox = "[x]"
+	} else {
+		checkbox = "[ ]"
+	}
+
+	if isFocused {
+		return "  " + focusedStyle.Render(checkbox+" "+field.Label)
+	}
+	return "  " + labelStyle.Render(checkbox+" "+field.Label)
 }

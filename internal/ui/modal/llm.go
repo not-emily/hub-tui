@@ -41,16 +41,18 @@ type LLMModal struct {
 	// Operation states
 	deleting bool
 	setting  bool
+	confirm  *components.Confirmation
 
 	// Edit mode
-	editName     string              // original name (empty for create)
-	editIsNew    bool                // true if creating, false if editing
-	form         *components.Form    // form component
-	saving       bool                // true while saving
-	integrations []client.Integration // available integrations for select field
-	loadingInt   bool                // loading integrations
-	loadingModels bool                 // loading models for selected integration
-	models        []client.ModelInfo // available models for selected integration
+	editName         string               // original name (empty for create)
+	editIsNew        bool                 // true if creating, false if editing
+	form             *components.Form     // form component
+	saving           bool                 // true while saving
+	setDefaultOnSave bool                 // set as default after successful save
+	integrations     []client.Integration // available integrations for select field
+	loadingInt       bool                 // loading integrations
+	loadingModels    bool                 // loading models for selected integration
+	models           []client.ModelInfo   // available models for selected integration
 
 	// Models pagination
 	modelsPageSize   int      // models per page
@@ -67,6 +69,7 @@ func NewLLMModal(c *client.Client) *LLMModal {
 		client:  c,
 		loading: true,
 		view:    llmViewList,
+		confirm: components.NewConfirmation(),
 	}
 }
 
@@ -246,6 +249,7 @@ func (m *LLMModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 
 	case LLMProfileDeletedMsg:
 		m.deleting = false
+		m.confirm.Clear()
 		if msg.Error != nil {
 			m.error = msg.Error.Error()
 		} else {
@@ -261,7 +265,15 @@ func (m *LLMModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		if msg.Error != nil {
 			m.error = msg.Error.Error()
 		} else {
-			// Update local state
+			// If we were in edit view (came from save flow), return to list and refresh
+			if m.view == llmViewEdit {
+				m.view = llmViewList
+				m.form = nil
+				m.error = ""
+				m.loading = true
+				return m, m.loadProfiles()
+			}
+			// Otherwise just update local state (from list view [s] key)
 			if m.profiles != nil {
 				m.profiles.DefaultProfile = msg.Name
 			}
@@ -274,7 +286,13 @@ func (m *LLMModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		if msg.Error != nil {
 			m.error = msg.Error.Error()
 		} else {
-			// Success - return to list and refresh
+			// Success - check if we need to set as default
+			if m.setDefaultOnSave {
+				m.setDefaultOnSave = false
+				m.setting = true
+				return m, m.setDefault(msg.Name)
+			}
+			// Return to list and refresh
 			m.view = llmViewList
 			m.form = nil
 			m.error = ""
@@ -319,6 +337,10 @@ func (m *LLMModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		}
 		return m, nil
 
+	case components.ConfirmationExpiredMsg:
+		m.confirm.HandleExpired(msg)
+		return m, nil
+
 	case tea.KeyMsg:
 		switch m.view {
 		case llmViewList:
@@ -333,15 +355,18 @@ func (m *LLMModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 func (m *LLMModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
+		m.confirm.Clear()
 		return nil, nil // Close modal
 
 	case "up", "k":
+		m.confirm.Clear()
 		if m.selected > 0 {
 			m.selected--
 			m.clearTestResult()
 		}
 
 	case "down", "j":
+		m.confirm.Clear()
 		// +1 for the "+ New Profile" option
 		if m.selected < len(m.names) {
 			m.selected++
@@ -349,6 +374,7 @@ func (m *LLMModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		}
 
 	case "t":
+		m.confirm.Clear()
 		// Test selected profile (not on "+ New Profile")
 		if !m.loading && !m.testing && m.selected < len(m.names) {
 			name := m.names[m.selected]
@@ -362,12 +388,17 @@ func (m *LLMModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		// Delete selected profile (not on "+ New Profile")
 		if !m.loading && !m.deleting && m.selected < len(m.names) {
 			name := m.names[m.selected]
-			m.deleting = true
-			m.error = ""
-			return m, m.deleteProfile(name)
+			if execute, cmd := m.confirm.Check("delete", name); execute {
+				m.deleting = true
+				m.error = ""
+				return m, m.deleteProfile(name)
+			} else if cmd != nil {
+				return m, cmd
+			}
 		}
 
 	case "s":
+		m.confirm.Clear()
 		// Set as default (not on "+ New Profile")
 		if !m.loading && !m.setting && m.selected < len(m.names) {
 			name := m.names[m.selected]
@@ -380,6 +411,7 @@ func (m *LLMModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		}
 
 	case "r":
+		m.confirm.Clear()
 		// Refresh
 		m.loading = true
 		m.error = ""
@@ -387,6 +419,7 @@ func (m *LLMModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		return m, m.loadProfiles()
 
 	case "enter":
+		m.confirm.Clear()
 		if !m.loading {
 			if m.selected < len(m.names) {
 				// Edit existing profile
@@ -493,18 +526,21 @@ func (m *LLMModal) doSave() (Modal, tea.Cmd) {
 		return m, nil
 	}
 	m.saving = true
+	m.setDefaultOnSave = m.form.GetFieldChecked("default")
 	m.error = ""
 	return m, m.saveProfile()
 }
 
 func (m *LLMModal) enterEditMode(profileName string) tea.Cmd {
 	profile := m.profiles.Profiles[profileName]
+	isDefault := m.profiles.DefaultProfile == profileName
 
 	fields := []components.FormField{
 		{Label: "Name", Key: "name", Value: profileName},
 		{Label: "Integration", Key: "integration", Value: profile.Integration, Type: components.FieldSelect},
 		{Label: "Integration Profile", Key: "profile", Value: profile.Profile, Type: components.FieldSelect},
 		{Label: "Model", Key: "model", Value: profile.Model, Type: components.FieldSelect},
+		{Label: "Set as default", Key: "default", Type: components.FieldCheckbox, Checked: isDefault},
 	}
 
 	m.form = components.NewForm("Edit Profile", fields)
@@ -536,6 +572,7 @@ func (m *LLMModal) enterCreateMode() tea.Cmd {
 		{Label: "Integration", Key: "integration", Value: "", Type: components.FieldSelect},
 		{Label: "Integration Profile", Key: "profile", Value: "", Type: components.FieldSelect},
 		{Label: "Model", Key: "model", Value: "", Type: components.FieldSelect},
+		{Label: "Set as default", Key: "default", Type: components.FieldCheckbox, Checked: false},
 	}
 
 	m.form = components.NewForm("New Profile", fields)
@@ -878,7 +915,13 @@ func (m *LLMModal) View() string {
 	// Hints
 	lines = append(lines, "")
 	hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
-	lines = append(lines, hintStyle.Render("  [t] Test  [s] Set default  [d] Delete  [r] Refresh"))
+	warningHintStyle := lipgloss.NewStyle().Foreground(theme.Warning)
+
+	if m.confirm.IsPending("delete", "") {
+		lines = append(lines, warningHintStyle.Render("  Press d again to delete"))
+	} else {
+		lines = append(lines, hintStyle.Render("  [t] Test  [s] Set default  [d] Delete  [r] Refresh"))
+	}
 
 	return strings.Join(lines, "\n")
 }
