@@ -17,6 +17,7 @@ const (
 	FieldSelect                    // Selection field with options
 	FieldButton                    // Button (e.g., Save, Cancel)
 	FieldCheckbox                  // Checkbox (toggle with space or enter)
+	FieldTextArea                  // Multi-line text input field
 )
 
 // FormField represents a single form field.
@@ -30,6 +31,12 @@ type FormField struct {
 	Selected        int             // For select fields: currently selected index
 	DisabledOptions map[string]bool // For select fields: options that are disabled (grayed out)
 	Checked         bool            // For checkbox fields: whether the checkbox is checked
+
+	// Extended fields for parameter forms
+	Required    bool   // Show required indicator, used for validation
+	Error       string // Validation error to display below field
+	Description string // Help text shown below field
+	ParamType   string // Original param type: "string", "number", "boolean", "array", "object"
 }
 
 // Form is a reusable form component.
@@ -71,6 +78,8 @@ func (f *Form) Update(msg tea.KeyMsg) bool {
 		return f.updateButton(msg)
 	case FieldCheckbox:
 		return f.updateCheckbox(msg)
+	case FieldTextArea:
+		return f.updateTextArea(msg)
 	default:
 		return f.updateText(msg)
 	}
@@ -114,6 +123,11 @@ func (f *Form) updateText(msg tea.KeyMsg) bool {
 		if f.cursor < len(val) {
 			f.Fields[f.focused].Value = val[:f.cursor] + val[f.cursor+1:]
 		}
+	case tea.KeySpace:
+		// Insert space at cursor position
+		val := f.Fields[f.focused].Value
+		f.Fields[f.focused].Value = val[:f.cursor] + " " + val[f.cursor:]
+		f.cursor++
 	case tea.KeyRunes:
 		// Insert runes at cursor position (handles both typing and paste)
 		text := string(msg.Runes)
@@ -204,6 +218,137 @@ func (f *Form) updateSelect(msg tea.KeyMsg) bool {
 	return false
 }
 
+// updateTextArea handles input for multi-line text area fields.
+// Enter inserts newlines, Tab/Shift+Tab moves between fields.
+func (f *Form) updateTextArea(msg tea.KeyMsg) bool {
+	field := &f.Fields[f.focused]
+
+	switch msg.Type {
+	case tea.KeyTab:
+		f.focused = (f.focused + 1) % len(f.Fields)
+		f.cursor = len(f.Fields[f.focused].Value)
+	case tea.KeyShiftTab:
+		f.focused = (f.focused - 1 + len(f.Fields)) % len(f.Fields)
+		f.cursor = len(f.Fields[f.focused].Value)
+	case tea.KeyEnter:
+		// Insert newline at cursor position
+		val := field.Value
+		field.Value = val[:f.cursor] + "\n" + val[f.cursor:]
+		f.cursor++
+	case tea.KeyUp:
+		// Move cursor up one line
+		f.moveCursorVertical(field, -1)
+	case tea.KeyDown:
+		// Move cursor down one line
+		f.moveCursorVertical(field, 1)
+	case tea.KeyLeft:
+		if f.cursor > 0 {
+			f.cursor--
+		}
+	case tea.KeyRight:
+		if f.cursor < len(field.Value) {
+			f.cursor++
+		}
+	case tea.KeyHome, tea.KeyCtrlA:
+		// Move to start of current line
+		f.cursor = f.findLineStart(field.Value, f.cursor)
+	case tea.KeyEnd, tea.KeyCtrlE:
+		// Move to end of current line
+		f.cursor = f.findLineEnd(field.Value, f.cursor)
+	case tea.KeyBackspace:
+		if f.cursor > 0 {
+			val := field.Value
+			field.Value = val[:f.cursor-1] + val[f.cursor:]
+			f.cursor--
+		}
+	case tea.KeyDelete:
+		val := field.Value
+		if f.cursor < len(val) {
+			field.Value = val[:f.cursor] + val[f.cursor+1:]
+		}
+	case tea.KeySpace:
+		// Insert space at cursor position
+		val := field.Value
+		field.Value = val[:f.cursor] + " " + val[f.cursor:]
+		f.cursor++
+	case tea.KeyRunes:
+		// Insert runes at cursor position (handles both typing and paste)
+		text := string(msg.Runes)
+		val := field.Value
+		field.Value = val[:f.cursor] + text + val[f.cursor:]
+		f.cursor += len(text)
+	}
+	return false
+}
+
+// moveCursorVertical moves the cursor up or down by the given number of lines.
+func (f *Form) moveCursorVertical(field *FormField, direction int) {
+	lines := strings.Split(field.Value, "\n")
+	if len(lines) <= 1 {
+		return
+	}
+
+	// Find current line and column
+	currentLine := 0
+	currentCol := f.cursor
+	pos := 0
+	for i, line := range lines {
+		lineLen := len(line)
+		if i < len(lines)-1 {
+			lineLen++ // Account for newline
+		}
+		if pos+lineLen > f.cursor {
+			currentLine = i
+			currentCol = f.cursor - pos
+			break
+		}
+		pos += lineLen
+	}
+
+	// Calculate new line
+	newLine := currentLine + direction
+	if newLine < 0 {
+		newLine = 0
+	}
+	if newLine >= len(lines) {
+		newLine = len(lines) - 1
+	}
+
+	// Calculate new cursor position
+	newCol := currentCol
+	if newCol > len(lines[newLine]) {
+		newCol = len(lines[newLine])
+	}
+
+	// Calculate absolute position
+	newPos := 0
+	for i := 0; i < newLine; i++ {
+		newPos += len(lines[i]) + 1 // +1 for newline
+	}
+	newPos += newCol
+	f.cursor = newPos
+}
+
+// findLineStart finds the start position of the line containing the cursor.
+func (f *Form) findLineStart(value string, cursor int) int {
+	for i := cursor - 1; i >= 0; i-- {
+		if value[i] == '\n' {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// findLineEnd finds the end position of the line containing the cursor.
+func (f *Form) findLineEnd(value string, cursor int) int {
+	for i := cursor; i < len(value); i++ {
+		if value[i] == '\n' {
+			return i
+		}
+	}
+	return len(value)
+}
+
 // SetFieldOptions updates the options for a select field and resets selection.
 func (f *Form) SetFieldOptions(key string, options []string, defaultValue string) {
 	for i := range f.Fields {
@@ -288,6 +433,55 @@ func (f *Form) Values() map[string]string {
 	return result
 }
 
+// ValidateRequired checks all required fields have values.
+// Returns map of field key -> error message for empty required fields.
+func (f *Form) ValidateRequired() map[string]string {
+	errors := make(map[string]string)
+	for _, field := range f.Fields {
+		if field.Required && strings.TrimSpace(field.Value) == "" && !field.Checked {
+			errors[field.Key] = field.Label + " is required"
+		}
+	}
+	return errors
+}
+
+// SetFieldError sets the error message for a field.
+func (f *Form) SetFieldError(key, errorMsg string) {
+	for i := range f.Fields {
+		if f.Fields[i].Key == key {
+			f.Fields[i].Error = errorMsg
+			break
+		}
+	}
+}
+
+// ClearErrors clears all field errors.
+func (f *Form) ClearErrors() {
+	for i := range f.Fields {
+		f.Fields[i].Error = ""
+	}
+}
+
+// HasErrors returns true if any field has an error.
+func (f *Form) HasErrors() bool {
+	for _, field := range f.Fields {
+		if field.Error != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// SetFieldValue sets the value for a field by key.
+func (f *Form) SetFieldValue(key, value string) {
+	for i := range f.Fields {
+		if f.Fields[i].Key == key {
+			f.Fields[i].Value = value
+			break
+		}
+	}
+}
+
 // View renders the form.
 func (f *Form) View() string {
 	var lines []string
@@ -299,6 +493,9 @@ func (f *Form) View() string {
 	optionStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
 	selectedOptionStyle := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
 	disabledStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary).Faint(true)
+	errorStyle := lipgloss.NewStyle().Foreground(theme.Error)
+	descStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary).Faint(true)
+	requiredStyle := lipgloss.NewStyle().Foreground(theme.Error)
 
 	for i, field := range f.Fields {
 		isFocused := i == f.focused
@@ -309,9 +506,11 @@ func (f *Form) View() string {
 		case FieldButton:
 			lines = append(lines, f.renderButtonField(field, isFocused, focusedValueStyle, labelStyle))
 		case FieldCheckbox:
-			lines = append(lines, f.renderCheckboxField(field, isFocused, labelStyle, focusedValueStyle))
+			lines = append(lines, f.renderCheckboxField(field, isFocused, labelStyle, focusedValueStyle, requiredStyle, errorStyle)...)
+		case FieldTextArea:
+			lines = append(lines, f.renderTextAreaField(field, isFocused, labelStyle, valueStyle, focusedValueStyle, cursorStyle, requiredStyle, errorStyle, descStyle)...)
 		default:
-			lines = append(lines, f.renderTextField(field, isFocused, labelStyle, valueStyle, focusedValueStyle, cursorStyle))
+			lines = append(lines, f.renderTextField(field, isFocused, labelStyle, valueStyle, focusedValueStyle, cursorStyle, requiredStyle, errorStyle, descStyle)...)
 		}
 	}
 
@@ -319,8 +518,15 @@ func (f *Form) View() string {
 }
 
 // renderTextField renders a text input field.
-func (f *Form) renderTextField(field FormField, isFocused bool, labelStyle, valueStyle, focusedValueStyle, cursorStyle lipgloss.Style) string {
-	label := labelStyle.Render(field.Label + ":")
+func (f *Form) renderTextField(field FormField, isFocused bool, labelStyle, valueStyle, focusedValueStyle, cursorStyle, requiredStyle, errorStyle, descStyle lipgloss.Style) []string {
+	var lines []string
+
+	// Build label with required indicator
+	labelText := field.Label
+	if field.Required {
+		labelText += requiredStyle.Render("*")
+	}
+	label := labelStyle.Render(labelText + ":")
 
 	val := field.Value
 	if field.Password && val != "" {
@@ -350,7 +556,19 @@ func (f *Form) renderTextField(field FormField, isFocused bool, labelStyle, valu
 		}
 	}
 
-	return "  " + label + " " + renderedValue
+	lines = append(lines, "  "+label+" "+renderedValue)
+
+	// Show error if present
+	if field.Error != "" {
+		lines = append(lines, "    "+errorStyle.Render("! "+field.Error))
+	}
+
+	// Show description if focused and no error
+	if isFocused && field.Description != "" && field.Error == "" {
+		lines = append(lines, "    "+descStyle.Render(field.Description))
+	}
+
+	return lines
 }
 
 // renderSelectField renders a selection field with options.
@@ -417,7 +635,9 @@ func (f *Form) renderButtonField(field FormField, isFocused bool, focusedStyle, 
 }
 
 // renderCheckboxField renders a checkbox field.
-func (f *Form) renderCheckboxField(field FormField, isFocused bool, labelStyle, focusedStyle lipgloss.Style) string {
+func (f *Form) renderCheckboxField(field FormField, isFocused bool, labelStyle, focusedStyle, requiredStyle, errorStyle lipgloss.Style) []string {
+	var lines []string
+
 	// Checkbox indicator: [x] for checked, [ ] for unchecked
 	var checkbox string
 	if field.Checked {
@@ -426,8 +646,141 @@ func (f *Form) renderCheckboxField(field FormField, isFocused bool, labelStyle, 
 		checkbox = "[ ]"
 	}
 
-	if isFocused {
-		return "  " + focusedStyle.Render(checkbox+" "+field.Label)
+	// Build label with required indicator
+	labelText := field.Label
+	if field.Required {
+		labelText += requiredStyle.Render("*")
 	}
-	return "  " + labelStyle.Render(checkbox+" "+field.Label)
+
+	if isFocused {
+		lines = append(lines, "  "+focusedStyle.Render(checkbox+" "+labelText))
+	} else {
+		lines = append(lines, "  "+labelStyle.Render(checkbox+" "+labelText))
+	}
+
+	// Show error if present
+	if field.Error != "" {
+		lines = append(lines, "    "+errorStyle.Render("! "+field.Error))
+	}
+
+	return lines
+}
+
+// renderTextAreaField renders a multi-line text area field.
+func (f *Form) renderTextAreaField(field FormField, isFocused bool, labelStyle, valueStyle, focusedValueStyle, cursorStyle, requiredStyle, errorStyle, descStyle lipgloss.Style) []string {
+	var lines []string
+
+	// Build label with required indicator
+	labelText := field.Label
+	if field.Required {
+		labelText += requiredStyle.Render("*")
+	}
+	label := labelStyle.Render(labelText + ":")
+	lines = append(lines, "  "+label)
+
+	// Split value into lines for rendering
+	textLines := strings.Split(field.Value, "\n")
+	if len(textLines) == 0 {
+		textLines = []string{""}
+	}
+
+	// Calculate cursor position (line and column)
+	cursorLine := 0
+	cursorCol := f.cursor
+	pos := 0
+	for i, line := range textLines {
+		lineLen := len(line)
+		if i < len(textLines)-1 {
+			lineLen++ // Account for newline
+		}
+		if pos+lineLen > f.cursor || i == len(textLines)-1 {
+			cursorLine = i
+			cursorCol = f.cursor - pos
+			if cursorCol > len(line) {
+				cursorCol = len(line)
+			}
+			break
+		}
+		pos += lineLen
+	}
+
+	// Render each line of the textarea
+	const maxVisibleLines = 5
+	borderStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+
+	// Calculate visible range
+	startLine := 0
+	if cursorLine >= maxVisibleLines {
+		startLine = cursorLine - maxVisibleLines + 1
+	}
+	endLine := startLine + maxVisibleLines
+	if endLine > len(textLines) {
+		endLine = len(textLines)
+	}
+
+	// Top border
+	lines = append(lines, "    "+borderStyle.Render("┌────────────────────────────────────────┐"))
+
+	// Render visible lines
+	for i := startLine; i < endLine; i++ {
+		line := textLines[i]
+		if len(line) > 38 {
+			line = line[:38]
+		}
+
+		var renderedLine string
+		if isFocused && i == cursorLine {
+			// Show cursor on this line
+			if cursorCol < len(line) {
+				before := line[:cursorCol]
+				cursorChar := string(line[cursorCol])
+				after := ""
+				if cursorCol+1 < len(line) {
+					after = line[cursorCol+1:]
+				}
+				renderedLine = focusedValueStyle.Render(before) +
+					cursorStyle.Render(cursorChar) +
+					focusedValueStyle.Render(after)
+			} else {
+				renderedLine = focusedValueStyle.Render(line) + cursorStyle.Render(" ")
+			}
+		} else if isFocused {
+			renderedLine = focusedValueStyle.Render(line)
+		} else {
+			renderedLine = valueStyle.Render(line)
+		}
+
+		// Pad line to fill the box
+		padding := 38 - lipgloss.Width(line)
+		if padding < 0 {
+			padding = 0
+		}
+		renderedLine += strings.Repeat(" ", padding)
+
+		lines = append(lines, "    "+borderStyle.Render("│ ")+renderedLine+borderStyle.Render(" │"))
+	}
+
+	// Fill remaining lines if less than maxVisibleLines
+	for i := endLine - startLine; i < maxVisibleLines; i++ {
+		emptyLine := strings.Repeat(" ", 38)
+		if isFocused && len(textLines) == 1 && textLines[0] == "" && i == 0 {
+			emptyLine = cursorStyle.Render(" ") + strings.Repeat(" ", 37)
+		}
+		lines = append(lines, "    "+borderStyle.Render("│ ")+emptyLine+borderStyle.Render(" │"))
+	}
+
+	// Bottom border
+	lines = append(lines, "    "+borderStyle.Render("└────────────────────────────────────────┘"))
+
+	// Show error if present
+	if field.Error != "" {
+		lines = append(lines, "    "+errorStyle.Render("! "+field.Error))
+	}
+
+	// Show description
+	if field.Description != "" && field.Error == "" {
+		lines = append(lines, "    "+descStyle.Render(field.Description))
+	}
+
+	return lines
 }

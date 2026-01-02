@@ -199,6 +199,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.SetInContext(msg.Type == "assistant" && msg.Target != "")
 		return m, nil
 
+	case AskNeedsInputMsg:
+		// Add placeholder text to the pending hub message
+		m.chat.AppendToLastMessage("Please complete the form below.")
+		m.chat.FinishLastMessage()
+
+		// Open parameter form modal
+		formModal := modal.NewParamFormModal(msg.Target, msg.Schema)
+		cmd := m.modal.Open(formModal)
+		return m, cmd
+
+	case AskExecutedMsg:
+		// Replace placeholder with success message
+		if msg.Result != nil && msg.Result.Message != "" {
+			m.chat.ReplaceLastMessageContent(msg.Result.Message)
+		} else {
+			m.chat.ReplaceLastMessageContent("Done.")
+		}
+		return m, nil
+
+	case AskErrorMsg:
+		// Replace placeholder with error message
+		if msg.Error != nil {
+			m.chat.ReplaceLastMessageContent("Error: " + msg.Error.Message)
+		} else {
+			m.chat.ReplaceLastMessageContent("An error occurred.")
+		}
+		return m, nil
+
+	case modal.ParamFormSubmitMsg:
+		// Close modal and submit structured params
+		m.modal.Close()
+		return m, m.doAskWithParams(msg.Target, msg.Params)
+
+	case modal.ParamFormCancelMsg:
+		// User cancelled - close modal and replace placeholder
+		m.modal.Close()
+		m.chat.ReplaceLastMessageContent("Form cancelled.")
+		return m, nil
+
 	case CacheRefreshMsg:
 		return m.handleCacheRefresh(msg)
 
@@ -769,8 +808,80 @@ func (m *Model) doAsk(message string) tea.Cmd {
 			},
 		}
 
-		_, err := m.client.Ask(ctx, message, callbacks)
-		return StreamDoneMsg{Error: err}
+		resp, err := m.client.Ask(ctx, message, callbacks)
+		if err != nil {
+			return StreamDoneMsg{Error: err}
+		}
+
+		// Handle status-based response
+		switch resp.Status {
+		case client.StatusNeedsInput:
+			return AskNeedsInputMsg{
+				Target: resp.Target,
+				Schema: resp.Schema,
+			}
+		case client.StatusExecuted:
+			return AskExecutedMsg{
+				Target: resp.Target,
+				Result: resp.Result,
+			}
+		case client.StatusError:
+			return AskErrorMsg{
+				Target: resp.Target,
+				Error:  resp.Error,
+			}
+		default:
+			// Legacy response format (assistant chat, etc.) - no status field
+			return StreamDoneMsg{Error: nil}
+		}
+	}
+}
+
+// doAskWithParams sends structured params to the API.
+func (m *Model) doAskWithParams(target string, params map[string]interface{}) tea.Cmd {
+	return func() tea.Msg {
+		req := client.AskRequest{
+			Target: target,
+			Params: params,
+		}
+
+		resp, err := m.client.AskDirect(req)
+		if err != nil {
+			return AskErrorMsg{
+				Target: target,
+				Error: &client.AskError{
+					Code:    "request_failed",
+					Message: err.Error(),
+				},
+			}
+		}
+
+		switch resp.Status {
+		case client.StatusNeedsInput:
+			// Validation errors - reopen form with errors
+			return AskNeedsInputMsg{
+				Target: resp.Target,
+				Schema: resp.Schema,
+			}
+		case client.StatusExecuted:
+			return AskExecutedMsg{
+				Target: resp.Target,
+				Result: resp.Result,
+			}
+		case client.StatusError:
+			return AskErrorMsg{
+				Target: resp.Target,
+				Error:  resp.Error,
+			}
+		default:
+			return AskErrorMsg{
+				Target: target,
+				Error: &client.AskError{
+					Code:    "unknown_status",
+					Message: "Unexpected response status: " + resp.Status,
+				},
+			}
+		}
 	}
 }
 

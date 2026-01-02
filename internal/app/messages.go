@@ -1,6 +1,10 @@
 package app
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/pxp/hub-tui/internal/client"
+)
 
 // Custom message types for the hub-tui application.
 // Additional messages will be added as features are implemented.
@@ -115,4 +119,22 @@ type StepResult struct {
 	Success  bool
 	Output   interface{}
 	Error    string
+}
+
+// AskNeedsInputMsg indicates the API needs more input (parameter collection).
+type AskNeedsInputMsg struct {
+	Target string
+	Schema *client.ParamSchema
+}
+
+// AskExecutedMsg indicates the API executed successfully.
+type AskExecutedMsg struct {
+	Target string
+	Result *client.ExecuteResult
+}
+
+// AskErrorMsg indicates an API error.
+type AskErrorMsg struct {
+	Target string
+	Error  *client.AskError
 }

@@ -93,6 +93,13 @@ func (m *Model) FinishLastMessage() {
 	}
 }
 
+// ReplaceLastMessageContent replaces the content of the last message.
+func (m *Model) ReplaceLastMessageContent(content string) {
+	if len(m.messages) > 0 {
+		m.messages[len(m.messages)-1].Content = content
+	}
+}
+
 // IsStreaming returns true if currently receiving a response.
 func (m Model) IsStreaming() bool {
 	if len(m.messages) == 0 {

@@ -15,6 +15,13 @@ type Modal interface {
 	Title() string
 }
 
+// FormModal is an optional interface for modals that use form-style keybindings.
+// Form modals use Esc to cancel and Ctrl+S to save, instead of q to close.
+type FormModal interface {
+	Modal
+	IsFormModal() bool
+}
+
 // State tracks the currently active modal.
 type State struct {
 	Active Modal
@@ -55,14 +62,17 @@ func (s *State) Update(msg tea.Msg) (bool, tea.Cmd) {
 	}
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		// q closes modal from anywhere
-		if keyMsg.String() == "q" {
+		// Check if this is a form modal (uses Esc/Ctrl+S, not q)
+		_, isFormModal := s.Active.(FormModal)
+
+		// q closes non-form modals from anywhere
+		if !isFormModal && keyMsg.String() == "q" {
 			s.Active = nil
 			return true, nil
 		}
 	}
 
-	// Forward to modal (let modal handle Esc for "go back")
+	// Forward to modal (let modal handle Esc for "go back" or form submission)
 	var cmd tea.Cmd
 	s.Active, cmd = s.Active.Update(msg)
 
@@ -100,7 +110,14 @@ func (s *State) View() string {
 
 	// Build title bar: title on left, hint on right
 	title := titleStyle.Render(s.Active.Title())
-	hint := hintStyle.Render("q to close")
+
+	// Different hint for form modals
+	var hint string
+	if _, isFormModal := s.Active.(FormModal); isFormModal {
+		hint = hintStyle.Render("Esc cancel · Ctrl+S save")
+	} else {
+		hint = hintStyle.Render("q to close")
+	}
 
 	// Calculate padding between title and hint
 	// Border takes 2 chars (left + right), padding takes 2 chars (1 each side)
