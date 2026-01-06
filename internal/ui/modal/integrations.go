@@ -21,6 +21,13 @@ const (
 	viewConfigure
 )
 
+// LLM config type views (offset to avoid collision, defined in integrations_llm.go)
+const (
+	viewConfigLLM integrationsView = iota + 100
+	viewLLMProviderForm
+	viewLLMProfileForm
+)
+
 // IntegrationsModal displays and configures integrations.
 type IntegrationsModal struct {
 	client       *client.Client
@@ -32,19 +39,53 @@ type IntegrationsModal struct {
 	// Current view
 	view integrationsView
 
-	// Profile selection
+	// Profile selection (api_key config type)
 	profileSelected int
 	profileOptions  []string // existing profiles + "New profile"
 	newProfileName  string
 	enteringName    bool
 
-	// Configure mode
+	// Configure mode (api_key config type)
 	configName    string
 	configProfile string
 	form          *components.Form
 	saving        bool
 	testing       bool
 	testResult    string
+
+	// LLM config type state (implemented in integrations_llm.go)
+	llmIntegration client.Integration        // current integration being configured
+	llmProviders   []client.ProviderAccount  // loaded providers
+	llmProfiles    []client.LLMProfile       // loaded profiles
+	llmItems       []llmListItem             // flattened list for navigation
+	llmSelected    int                       // current selection index
+	llmLoading     bool
+	llmError       string
+
+	// LLM provider form state
+	llmProviderForm       *components.Form
+	llmAvailableProviders []client.AvailableProvider
+	llmSavingProvider     bool
+
+	// LLM profile form state
+	llmProfileForm    *components.Form
+	llmEditingProfile *client.LLMProfile // nil if creating new
+	llmSavingProfile  bool
+
+	// Model pagination state
+	llmModels            []client.ModelInfo
+	llmModelsCursor      string   // current cursor (empty = first page)
+	llmModelsCursorStack []string // stack of previous cursors for back navigation
+	llmModelsHasMore     bool
+	llmModelsPage        int
+	llmLoadingModels     bool
+
+	// LLM profile testing state
+	llmTesting    bool
+	llmTestResult *client.LLMTestResult
+
+	// LLM confirmation state
+	llmConfirm components.Confirmation
 }
 
 // NewIntegrationsModal creates a new integrations modal.
@@ -139,6 +180,45 @@ func (m *IntegrationsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		}
 		return m, nil
 
+	case LLMDataLoadedMsg:
+		return m.handleLLMDataLoaded(msg)
+
+	case LLMAvailableProvidersMsg:
+		return m.handleLLMAvailableProviders(msg)
+
+	case LLMProviderSavedMsg:
+		return m.handleLLMProviderSaved(msg)
+
+	case LLMProviderDeletedMsg:
+		return m.handleLLMProviderDeleted(msg)
+
+	case LLMErrorMsg:
+		m.llmLoading = false
+		m.llmSavingProvider = false
+		m.llmSavingProfile = false
+		m.llmLoadingModels = false
+		m.llmError = msg.Err.Error()
+		return m, nil
+
+	case LLMModelsLoadedMsg:
+		return m.handleLLMModelsLoaded(msg)
+
+	case LLMProfileSavedMsg:
+		return m.handleLLMProfileSaved(msg)
+
+	case LLMProfileDeletedMsg:
+		return m.handleLLMProfileDeleted(msg)
+
+	case LLMProfileTestedMsg:
+		return m.handleLLMProfileTested(msg)
+
+	case LLMProfileDefaultSetMsg:
+		return m.handleLLMProfileDefaultSet(msg)
+
+	case components.ConfirmationExpiredMsg:
+		m.llmConfirm.HandleExpired(msg)
+		return m, nil
+
 	case tea.KeyMsg:
 		switch m.view {
 		case viewList:
@@ -147,6 +227,8 @@ func (m *IntegrationsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			return m.updateProfiles(msg)
 		case viewConfigure:
 			return m.updateConfigure(msg)
+		case viewConfigLLM, viewLLMProviderForm, viewLLMProfileForm:
+			return m.updateLLM(msg)
 		}
 	}
 	return m, nil
@@ -168,7 +250,16 @@ func (m *IntegrationsModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		}
 	case "enter":
 		if !m.loading && len(m.integrations) > 0 {
-			m.enterProfilesView()
+			integration := m.integrations[m.selected]
+			switch integration.ConfigType {
+			case "llm":
+				return m.enterLLMConfig(integration)
+			case "api_key", "":
+				// api_key is the default for backwards compatibility
+				m.enterProfilesView()
+			default:
+				m.error = fmt.Sprintf("Unknown config type: %s", integration.ConfigType)
+			}
 		}
 	case "t":
 		if !m.loading && !m.testing && len(m.integrations) > 0 {
@@ -323,6 +414,12 @@ func (m *IntegrationsModal) Title() string {
 		return m.configName + ": Select Profile"
 	case viewConfigure:
 		return fmt.Sprintf("Configure: %s (%s)", m.configName, m.configProfile)
+	case viewConfigLLM:
+		return m.llmIntegration.DisplayName + " Configuration"
+	case viewLLMProviderForm:
+		return m.llmIntegration.DisplayName + ": Add Provider"
+	case viewLLMProfileForm:
+		return m.llmIntegration.DisplayName + ": Profile"
 	default:
 		return "Integrations"
 	}
@@ -335,6 +432,8 @@ func (m *IntegrationsModal) View() string {
 		return m.viewProfilesContent()
 	case viewConfigure:
 		return m.viewConfigureContent()
+	case viewConfigLLM, viewLLMProviderForm, viewLLMProfileForm:
+		return m.viewLLM()
 	default:
 		return m.viewListContent()
 	}
@@ -381,29 +480,36 @@ func (m *IntegrationsModal) viewListContent() string {
 			indicator = notConfiguredStyle.Render("✗")
 		}
 
-		// Name with selection highlight
+		// Name with selection highlight - prefer DisplayName if available
+		displayName := integration.DisplayName
+		if displayName == "" {
+			displayName = integration.Name
+		}
 		var name string
 		if i == m.selected {
-			name = selectedStyle.Render(integration.Name)
+			name = selectedStyle.Render(displayName)
 		} else {
-			name = normalStyle.Render(integration.Name)
+			name = normalStyle.Render(displayName)
 		}
 
-		// Build line with profiles info
+		// Build line with status info
 		line := fmt.Sprintf("  %s %s", indicator, name)
 
 		// Pad name for alignment
-		padding := 16 - len(integration.Name)
+		padding := 16 - len(displayName)
 		if padding < 2 {
 			padding = 2
 		}
 
-		// Show profiles or status
-		if len(integration.Profiles) > 0 {
-			profilesStr := strings.Join(integration.Profiles, ", ")
-			line += strings.Repeat(" ", padding) + descStyle.Render(profilesStr)
-		} else {
-			line += strings.Repeat(" ", padding) + descStyle.Render("Not configured")
+		// Show status - profiles for api_key type, simple status for others
+		var statusStr string
+		if integration.Configured && len(integration.Profiles) > 0 {
+			statusStr = strings.Join(integration.Profiles, ", ")
+		} else if !integration.Configured {
+			statusStr = "Not configured"
+		}
+		if statusStr != "" {
+			line += strings.Repeat(" ", padding) + descStyle.Render(statusStr)
 		}
 
 		lines = append(lines, line)

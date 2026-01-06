@@ -298,6 +298,96 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case modal.LLMDataLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMAvailableProvidersMsg:
+		if msg.Err != nil && client.IsAuthError(msg.Err) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMProviderSavedMsg:
+		if msg.Err != nil && client.IsAuthError(msg.Err) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMProviderDeletedMsg:
+		if msg.Err != nil && client.IsAuthError(msg.Err) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMErrorMsg:
+		if msg.Err != nil && client.IsAuthError(msg.Err) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMModelsLoadedMsg:
+		if msg.Err != nil && client.IsAuthError(msg.Err) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMProfileSavedMsg:
+		if msg.Err != nil && client.IsAuthError(msg.Err) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMProfileDeletedMsg:
+		if msg.Err != nil && client.IsAuthError(msg.Err) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMProfileTestedMsg:
+		if msg.Err != nil && client.IsAuthError(msg.Err) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.LLMProfileDefaultSetMsg:
+		if msg.Err != nil && client.IsAuthError(msg.Err) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
 	case modal.TasksLoadedMsg:
 		if msg.Error != nil && client.IsAuthError(msg.Error) {
 			return m.handleAuthExpired()
@@ -341,74 +431,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case components.ConfirmationExpiredMsg:
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMProfilesLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMProfileTestedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMProfileDeletedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMDefaultSetMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMProfileSavedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMIntegrationsLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMOpenIntegrationsMsg:
-		// Close LLM modal and open integrations modal
-		m.modal.Close()
-		return m, m.modal.Open(modal.NewIntegrationsModal(m.client))
-
-	case modal.LLMModelsLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
 		if m.modal.IsOpen() {
 			_, cmd := m.modal.UpdateMsg(msg)
 			return m, cmd
@@ -599,9 +621,6 @@ func (m Model) handleCommand(cmd *chat.Command) (tea.Model, tea.Cmd) {
 
 	case "integrations":
 		return m, m.modal.Open(modal.NewIntegrationsModal(m.client))
-
-	case "llm":
-		return m, m.modal.Open(modal.NewLLMModal(m.client))
 
 	case "tasks":
 		// Convert app.Run to modal.TaskRun

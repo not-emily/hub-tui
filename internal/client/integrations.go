@@ -9,12 +9,17 @@ import (
 // Integration represents an integration from hub-core.
 type Integration struct {
 	Name           string   `json:"name"`
-	Type           string   `json:"type"` // "llm" or "api"
+	DisplayName    string   `json:"display_name"`
+	Type           string   `json:"type"`        // "api", "cli", "mcp"
+	ConfigType     string   `json:"config_type"` // "api_key", "llm", "oauth", etc.
 	Description    string   `json:"description"`
 	Configured     bool     `json:"configured"`
-	Profiles       []string `json:"profiles"`        // Configured profile names
-	DefaultProfile string   `json:"default_profile"` // Default profile to use
-	Fields         []string `json:"fields"`          // Required config fields
+	Profiles       []string `json:"profiles"`        // Configured profile names (api_key type)
+	DefaultProfile string   `json:"default_profile"` // Default profile to use (api_key type)
+	Fields         []string `json:"fields"`          // Required config fields (api_key type)
+	// LLM type summary fields (for list display)
+	ProviderCount int `json:"provider_count,omitempty"`
+	ProfileCount  int `json:"profile_count,omitempty"`
 }
 
 // integrationsResponse is the API response wrapper.
