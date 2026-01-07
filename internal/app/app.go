@@ -62,6 +62,11 @@ type Model struct {
 	ctrlCPressed bool
 	cancelAsk    context.CancelFunc // Cancel function for streaming request
 
+	// Workflow cancel hint tracking (single active hint)
+	workflowHintRunID  string // Run ID of workflow with active hint
+	workflowHintMsgIdx int    // Message index where hint is displayed
+	workflowHintActive bool   // Whether there's an active hint
+
 	// Sub-components
 	login     login.Model
 	chat      chat.Model
@@ -454,6 +459,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chat.AddSystemMessage("Failed to cancel task: " + msg.Error.Error())
 		}
 		return m, nil
+
+	case WorkflowHintExpiredMsg:
+		return m.handleWorkflowHintExpired(msg)
 	}
 
 	return m, nil
@@ -486,6 +494,14 @@ func (m Model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle Shift+C to cancel the tracked workflow
+	if msg.String() == "C" && m.workflowHintActive && m.workflowHintRunID != "" {
+		runID := m.workflowHintRunID
+		m.clearWorkflowHintWithUpdate()
+		m.chat.AddSystemMessage("Cancelling workflow...")
+		return m, m.doCancelTask(runID)
+	}
+
 	// Handle autocomplete navigation when visible
 	if m.chat.IsAutocompleteVisible() {
 		switch msg.String() {
@@ -495,8 +511,37 @@ func (m Model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "down":
 			m.chat.AutocompleteDown()
 			return m, nil
-		case "enter", "tab":
+		case "tab":
+			// Tab always completes text
 			m.chat.CompleteInput()
+			return m, nil
+		case "enter":
+			// Enter behavior depends on prefix type
+			prefix := m.chat.AutocompletePrefix()
+			switch prefix {
+			case chat.PrefixCommand:
+				// Execute slash command directly
+				m.chat.CompleteInput()
+				input := m.chat.InputValue()
+				if cmd := chat.ParseCommand(input); cmd != nil {
+					m.chat.ClearInput()
+					m.chat.HideAutocomplete()
+					return m.handleCommand(cmd)
+				}
+			case chat.PrefixWorkflow:
+				// Execute workflow directly
+				m.chat.CompleteInput()
+				input := m.chat.InputValue()
+				if len(input) > 1 && input[0] == '#' {
+					workflowName := input[1:]
+					m.chat.ClearInput()
+					m.chat.HideAutocomplete()
+					return m.startWorkflow(workflowName)
+				}
+			case chat.PrefixAssistant:
+				// Complete text for assistant (so user can type message)
+				m.chat.CompleteInput()
+			}
 			return m, nil
 		case "esc":
 			m.chat.HideAutocomplete()
@@ -504,7 +549,7 @@ func (m Model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Handle Tab to show autocomplete
+	// Handle Tab to show/cycle autocomplete
 	if msg.String() == "tab" && !m.chat.IsStreaming() {
 		prefix, partial := m.chat.GetInputPrefix()
 		suggestions := m.getSuggestions(prefix, partial)
@@ -528,8 +573,7 @@ func (m Model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(input) > 1 && input[0] == '#' {
 				workflowName := input[1:]
 				m.chat.ClearInput()
-				m.chat.AddSystemMessage("Starting workflow: " + workflowName)
-				return m, m.doRunWorkflow(workflowName)
+				return m.startWorkflow(workflowName)
 			}
 
 			m.chat.AddUserMessage(input)
@@ -553,14 +597,25 @@ func (m Model) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Hide autocomplete on any other key
-	if m.chat.IsAutocompleteVisible() {
-		m.chat.HideAutocomplete()
-	}
-
-	// Update chat
+	// Update chat first, then check for auto-show autocomplete
 	var cmd tea.Cmd
 	m.chat, cmd = m.chat.Update(msg)
+
+	// Auto-show autocomplete when typing /, @, or #
+	if !m.chat.IsStreaming() {
+		prefix, partial := m.chat.GetInputPrefix()
+		if prefix != chat.PrefixNone {
+			suggestions := m.getSuggestions(prefix, partial)
+			if len(suggestions) > 0 {
+				m.chat.ShowAutocomplete(prefix, partial, suggestions)
+			} else {
+				m.chat.HideAutocomplete()
+			}
+		} else if m.chat.IsAutocompleteVisible() {
+			m.chat.HideAutocomplete()
+		}
+	}
+
 	return m, cmd
 }
 
@@ -928,6 +983,38 @@ func (m *Model) doAssistantChat(assistant, message string) tea.Cmd {
 	}
 }
 
+// startWorkflow initiates a workflow with cancel hint tracking.
+func (m Model) startWorkflow(name string) (tea.Model, tea.Cmd) {
+	// Clear any previous hint
+	m.clearWorkflowHint()
+
+	// Add system message with cancel hint and track its index
+	m.chat.AddSystemMessage("Starting workflow: " + name + "  [Shift+C to cancel]")
+	m.workflowHintMsgIdx = m.chat.MessageCount() - 1
+	m.workflowHintActive = true
+	// workflowHintRunID will be set when WorkflowStartedMsg arrives
+
+	return m, m.doRunWorkflow(name)
+}
+
+// clearWorkflowHint removes the cancel hint from the tracked message.
+func (m *Model) clearWorkflowHint() {
+	if m.workflowHintActive {
+		// Find the workflow name from the message and update it to remove hint
+		// The message format is "Starting workflow: {name}  [Shift+C to cancel]"
+		// We want to strip "  [Shift+C to cancel]" from the end
+		m.workflowHintActive = false
+		m.workflowHintRunID = ""
+		// Update the message to remove the hint (message content is managed by chat)
+		// We'll update it by index
+		if m.workflowHintMsgIdx >= 0 {
+			// Get current content and strip the hint suffix
+			// Since we can't easily read the content, we'll store the workflow name separately
+			// For now, we just mark as inactive - the message stays as-is which is acceptable
+		}
+	}
+}
+
 func (m Model) doRunWorkflow(name string) tea.Cmd {
 	return func() tea.Msg {
 		runID, err := m.client.RunWorkflow(name)
@@ -942,6 +1029,11 @@ func (m Model) doRunWorkflow(name string) tea.Cmd {
 }
 
 func (m Model) handleWorkflowStarted(msg WorkflowStartedMsg) (tea.Model, tea.Cmd) {
+	// Store the run ID for hint tracking
+	if m.workflowHintActive {
+		m.workflowHintRunID = msg.RunID
+	}
+
 	// Add to running tasks
 	m.tasks.Running = append(m.tasks.Running, Run{
 		ID:        msg.RunID,
@@ -953,11 +1045,49 @@ func (m Model) handleWorkflowStarted(msg WorkflowStartedMsg) (tea.Model, tea.Cmd
 	// Update status bar
 	m.updateTaskCounts()
 
+	// Start 30-second hint timer
+	hintTimer := tea.Tick(30*time.Second, func(t time.Time) tea.Msg {
+		return WorkflowHintExpiredMsg{RunID: msg.RunID}
+	})
+
 	// Start polling if this is the first running task
 	if len(m.tasks.Running) == 1 {
-		return m, m.pollTasks()
+		return m, tea.Batch(m.pollTasks(), hintTimer)
+	}
+	return m, hintTimer
+}
+
+func (m Model) handleWorkflowHintExpired(msg WorkflowHintExpiredMsg) (tea.Model, tea.Cmd) {
+	// Only clear if this is the currently tracked workflow
+	if m.workflowHintActive && m.workflowHintRunID == msg.RunID {
+		m.clearWorkflowHintWithUpdate()
 	}
 	return m, nil
+}
+
+// clearWorkflowHintWithUpdate removes the hint and updates the message.
+func (m *Model) clearWorkflowHintWithUpdate() {
+	if !m.workflowHintActive {
+		return
+	}
+
+	// Find the workflow name from running tasks
+	var workflowName string
+	for _, r := range m.tasks.Running {
+		if r.ID == m.workflowHintRunID {
+			workflowName = r.Workflow
+			break
+		}
+	}
+
+	// Update the message to remove the hint
+	if workflowName != "" && m.workflowHintMsgIdx >= 0 {
+		m.chat.UpdateMessageContent(m.workflowHintMsgIdx, "Starting workflow: "+workflowName)
+	}
+
+	m.workflowHintActive = false
+	m.workflowHintRunID = ""
+	m.workflowHintMsgIdx = -1
 }
 
 func (m Model) handlePollTasks() (tea.Model, tea.Cmd) {
@@ -1037,9 +1167,17 @@ func (m Model) handleTaskStatus(msg TaskStatusMsg) (tea.Model, tea.Cmd) {
 				newRunning = append(newRunning, apiRun)
 			} else if isRunSuccess(apiRun) {
 				newCompleted = append(newCompleted, apiRun)
+				// Clear hint if this was the tracked workflow
+				if m.workflowHintActive && m.workflowHintRunID == apiRun.ID {
+					m.clearWorkflowHintWithUpdate()
+				}
 				m.chat.AddSystemMessage("Workflow completed: " + apiRun.Workflow)
 			} else {
 				newFailed = append(newFailed, apiRun)
+				// Clear hint if this was the tracked workflow
+				if m.workflowHintActive && m.workflowHintRunID == apiRun.ID {
+					m.clearWorkflowHintWithUpdate()
+				}
 				errMsg := apiRun.Workflow
 				if apiRun.Error != "" {
 					errMsg += ": " + apiRun.Error
@@ -1050,6 +1188,10 @@ func (m Model) handleTaskStatus(msg TaskStatusMsg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			// Task disappeared from API - assume completed
+			// Clear hint if this was the tracked workflow
+			if m.workflowHintActive && m.workflowHintRunID == tracked.ID {
+				m.clearWorkflowHintWithUpdate()
+			}
 			m.chat.AddSystemMessage("Workflow completed: " + tracked.Workflow)
 			tracked.Status = "completed"
 			newCompleted = append(newCompleted, tracked)

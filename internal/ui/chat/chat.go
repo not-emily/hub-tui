@@ -100,6 +100,18 @@ func (m *Model) ReplaceLastMessageContent(content string) {
 	}
 }
 
+// MessageCount returns the number of messages.
+func (m Model) MessageCount() int {
+	return len(m.messages)
+}
+
+// UpdateMessageContent updates the content of a message at the given index.
+func (m *Model) UpdateMessageContent(idx int, content string) {
+	if idx >= 0 && idx < len(m.messages) {
+		m.messages[idx].Content = content
+	}
+}
+
 // IsStreaming returns true if currently receiving a response.
 func (m Model) IsStreaming() bool {
 	if len(m.messages) == 0 {
@@ -144,8 +156,13 @@ func (m *Model) AutocompleteUp() {
 }
 
 // AutocompleteDown moves autocomplete selection down.
-func (m *Model) AutocompleteDown()  {
+func (m *Model) AutocompleteDown() {
 	m.autocomplete.MoveDown()
+}
+
+// AutocompletePrefix returns the current autocomplete prefix type.
+func (m Model) AutocompletePrefix() InputPrefix {
+	return m.autocomplete.Prefix()
 }
 
 // CompleteInput completes the input with the selected suggestion.

@@ -93,6 +93,11 @@ type TaskCancelledMsg struct {
 	Error error
 }
 
+// WorkflowHintExpiredMsg is sent when the 30s cancel hint timer expires.
+type WorkflowHintExpiredMsg struct {
+	RunID string // The run ID whose hint expired
+}
+
 // Run mirrors client.Run for use in messages.
 type Run struct {
 	ID             string
