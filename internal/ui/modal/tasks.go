@@ -114,7 +114,7 @@ const (
 	viewTasksHistory
 )
 
-// NewTasksModal creates a new tasks modal with pre-loaded task state.
+// NewTasksModal creates a new tasks modal that fetches fresh data from the API.
 func NewTasksModal(c *client.Client) *TasksModal {
 	return &TasksModal{
 		client:  c,
@@ -122,58 +122,6 @@ func NewTasksModal(c *client.Client) *TasksModal {
 		view:    viewTasksList,
 		confirm: components.NewConfirmation(),
 	}
-}
-
-// NewTasksModalWithState creates a new tasks modal with pre-loaded task state.
-// Note: This uses cached data as a quick preview; the modal will auto-refresh
-// to get proper needs_attention separation.
-func NewTasksModalWithState(c *client.Client, running, completed, failed []TaskRun) *TasksModal {
-	// Separate needs_attention items from the input lists
-	var needsAttention []TaskRun
-	var filteredRunning, filteredCompleted, filteredFailed []TaskRun
-
-	for _, r := range running {
-		if r.NeedsAttention {
-			needsAttention = append(needsAttention, r)
-		} else {
-			filteredRunning = append(filteredRunning, r)
-		}
-	}
-	for _, r := range completed {
-		if r.NeedsAttention {
-			needsAttention = append(needsAttention, r)
-		} else {
-			filteredCompleted = append(filteredCompleted, r)
-		}
-	}
-	for _, r := range failed {
-		if r.NeedsAttention {
-			needsAttention = append(needsAttention, r)
-		} else {
-			filteredFailed = append(filteredFailed, r)
-		}
-	}
-
-	// Sort each category by most recent first
-	sortByMostRecent(needsAttention)
-	sortByMostRecent(filteredRunning)
-	sortByMostRecent(filteredCompleted)
-	sortByMostRecent(filteredFailed)
-
-	m := &TasksModal{
-		client:         c,
-		needsAttention: needsAttention,
-		running:        filteredRunning,
-		completed:      filteredCompleted,
-		failed:         filteredFailed,
-		completedTotal: len(filteredCompleted),
-		failedTotal:    len(filteredFailed),
-		loading:        false,
-		view:           viewTasksList,
-		confirm:        components.NewConfirmation(),
-	}
-	m.buildAllRuns()
-	return m
 }
 
 func (m *TasksModal) buildAllRuns() {
@@ -771,9 +719,13 @@ func (m *TasksModal) viewList() string {
 	}
 
 	if len(m.allRuns) == 0 {
-		return lipgloss.NewStyle().
-			Foreground(theme.TextSecondary).
-			Render("No tasks today.")
+		hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			hintStyle.Render("No tasks today."),
+			"",
+			hintStyle.Render("[h] History"),
+		)
 	}
 
 	var lines []string

@@ -678,18 +678,7 @@ func (m Model) handleCommand(cmd *chat.Command) (tea.Model, tea.Cmd) {
 		return m, m.modal.Open(modal.NewIntegrationsModal(m.client))
 
 	case "tasks":
-		// Convert app.Run to modal.TaskRun
-		var running, completed, failed []modal.TaskRun
-		for _, r := range m.tasks.Running {
-			running = append(running, appRunToModalRun(r))
-		}
-		for _, r := range m.tasks.Completed {
-			completed = append(completed, appRunToModalRun(r))
-		}
-		for _, r := range m.tasks.Failed {
-			failed = append(failed, appRunToModalRun(r))
-		}
-		return m, m.modal.Open(modal.NewTasksModalWithState(m.client, running, completed, failed))
+		return m, m.modal.Open(modal.NewTasksModal(m.client))
 
 	default:
 		if !chat.IsValidCommand(cmd.Name) {
@@ -1293,27 +1282,6 @@ func (m Model) doCancelTask(runID string) tea.Cmd {
 	}
 }
 
-// appRunToModalRun converts an app.Run to a modal.TaskRun.
-func appRunToModalRun(r Run) modal.TaskRun {
-	var startedAt, endedAt time.Time
-	if r.StartedAt != "" {
-		startedAt, _ = time.Parse(time.RFC3339, r.StartedAt)
-	}
-	if r.EndedAt != "" {
-		endedAt, _ = time.Parse(time.RFC3339, r.EndedAt)
-	}
-	return modal.TaskRun{
-		ID:             r.ID,
-		Workflow:       r.Workflow,
-		Status:         r.Status,
-		StartedAt:      startedAt,
-		EndedAt:        endedAt,
-		Error:          r.Error,
-		Result:         convertAppResultToClient(r.Result),
-		NeedsAttention: r.NeedsAttention,
-	}
-}
-
 // convertClientResult converts client.RunResult to app.RunResult.
 func convertClientResult(cr *client.RunResult) *RunResult {
 	if cr == nil {
@@ -1333,28 +1301,6 @@ func convertClientResult(cr *client.RunResult) *RunResult {
 		Success:      cr.Success,
 		Steps:        steps,
 		Error:        cr.Error,
-	}
-}
-
-// convertAppResultToClient converts app.RunResult to client.RunResult for modal.
-func convertAppResultToClient(ar *RunResult) *client.RunResult {
-	if ar == nil {
-		return nil
-	}
-	var steps []client.StepResult
-	for _, s := range ar.Steps {
-		steps = append(steps, client.StepResult{
-			StepName: s.StepName,
-			Success:  s.Success,
-			Output:   s.Output,
-			Error:    s.Error,
-		})
-	}
-	return &client.RunResult{
-		WorkflowName: ar.WorkflowName,
-		Success:      ar.Success,
-		Steps:        steps,
-		Error:        ar.Error,
 	}
 }
 
