@@ -22,10 +22,11 @@ type Run struct {
 
 // RunResult contains the workflow execution result.
 type RunResult struct {
-	WorkflowName string      `json:"workflow_name"`
-	Success      bool        `json:"success"`
+	WorkflowName string       `json:"workflow_name"`
+	Success      bool         `json:"success"`
+	Output       string       `json:"output,omitempty"`
 	Steps        []StepResult `json:"steps"`
-	Error        string      `json:"error,omitempty"`
+	Error        string       `json:"error,omitempty"`
 }
 
 // StepResult contains the result of a single workflow step.

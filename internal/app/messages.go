@@ -114,6 +114,7 @@ type Run struct {
 type RunResult struct {
 	WorkflowName string
 	Success      bool
+	Output       string
 	Steps        []StepResult
 	Error        string
 }

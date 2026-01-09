@@ -1299,6 +1299,7 @@ func convertClientResult(cr *client.RunResult) *RunResult {
 	return &RunResult{
 		WorkflowName: cr.WorkflowName,
 		Success:      cr.Success,
+		Output:       cr.Output,
 		Steps:        steps,
 		Error:        cr.Error,
 	}

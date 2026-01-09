@@ -1,7 +1,6 @@
 package modal
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -43,32 +42,7 @@ func formatRunOutput(result *client.RunResult) string {
 	if result == nil {
 		return ""
 	}
-
-	var outputs []string
-	for _, step := range result.Steps {
-		if step.Error != "" {
-			outputs = append(outputs, fmt.Sprintf("[%s] Error: %s", step.StepName, step.Error))
-		} else if step.Output != nil {
-			// Try to format the output nicely
-			switch v := step.Output.(type) {
-			case string:
-				outputs = append(outputs, fmt.Sprintf("[%s] %s", step.StepName, v))
-			case map[string]interface{}:
-				if msg, ok := v["message"].(string); ok {
-					outputs = append(outputs, fmt.Sprintf("[%s] %s", step.StepName, msg))
-				} else {
-					// JSON encode it
-					b, _ := json.MarshalIndent(v, "", "  ")
-					outputs = append(outputs, fmt.Sprintf("[%s]\n%s", step.StepName, string(b)))
-				}
-			default:
-				b, _ := json.MarshalIndent(v, "", "  ")
-				outputs = append(outputs, fmt.Sprintf("[%s]\n%s", step.StepName, string(b)))
-			}
-		}
-	}
-
-	return strings.Join(outputs, "\n")
+	return result.Output
 }
 
 // TasksModal displays running, completed, and failed tasks.
@@ -566,6 +540,11 @@ func (m *TasksModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		m.historyPage = 0
 		m.historyCursors = make(map[int]string)
 		return m, m.loadHistory(0)
+	case "r":
+		// Refresh tasks
+		m.confirm.Clear()
+		m.loading = true
+		return m, m.loadTasks()
 	}
 	return m, nil
 }
@@ -674,6 +653,11 @@ func (m *TasksModal) updateHistory(msg tea.KeyMsg) (Modal, tea.Cmd) {
 				}
 			}
 		}
+	case "r":
+		// Refresh history
+		m.confirm.Clear()
+		m.loading = true
+		return m, m.loadHistory(m.historyPage)
 	}
 	return m, nil
 }
@@ -851,7 +835,7 @@ func (m *TasksModal) viewList() string {
 	if m.confirm.IsPending("dismiss", "") {
 		lines = append(lines, warningHintStyle.Render("Press d again to dismiss"))
 	} else {
-		hints := "[Enter] Details"
+		hints := "[Enter] Details  [r] Refresh"
 		if len(m.running) > 0 {
 			hints += "  [c] Cancel"
 		}
@@ -972,7 +956,7 @@ func (m *TasksModal) viewHistory() string {
 	if m.confirm.IsPending("dismiss", "") {
 		lines = append(lines, warningHintStyle.Render("Press d again to dismiss"))
 	} else {
-		hints := "[Esc] Back  [Enter] Details"
+		hints := "[Esc] Back  [Enter] Details  [r] Refresh"
 		if selectedNeedsAttention {
 			hints += "  [d] Dismiss"
 		}
