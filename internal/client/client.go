@@ -38,6 +38,11 @@ func (c *Client) BaseURL() string {
 	return c.baseURL
 }
 
+// SetBaseURL updates the base URL for API requests.
+func (c *Client) SetBaseURL(url string) {
+	c.baseURL = url
+}
+
 // do executes an HTTP request with auth header injection.
 func (c *Client) do(req *http.Request) (*http.Response, error) {
 	if c.token != "" {

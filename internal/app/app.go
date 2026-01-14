@@ -93,6 +93,7 @@ func New(cfg *config.Config) Model {
 		m.state = StateMain
 		m.client = client.New(cfg.ServerURL)
 		m.client.SetToken(cfg.Token)
+		m.statusBar.SetServerURL(cfg.ServerURL)
 	}
 
 	return m
@@ -436,6 +437,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case components.ConfirmationExpiredMsg:
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.SettingsSavedMsg:
+		if msg.Error == nil && msg.Config != nil {
+			// Update app config and client with new server URL
+			m.config = msg.Config
+			m.client.SetBaseURL(msg.Config.ServerURL)
+			// Clear token since it's tied to the old server
+			m.client.SetToken("")
+			m.config.Token = ""
+			m.config.TokenExp = ""
+			// Save config without token
+			_ = m.config.Save()
+			// Close modal and reset to login state
+			m.modal.Close()
+			m.state = StateLogin
+			m.login = login.New(false, msg.Config.ServerURL)
+			m.login.SetSize(m.width, m.height)
+			m.statusBar.SetState(status.StateDisconnected)
+			m.statusBar.SetServerURL(msg.Config.ServerURL)
+			return m, nil
+		}
 		if m.modal.IsOpen() {
 			_, cmd := m.modal.UpdateMsg(msg)
 			return m, cmd

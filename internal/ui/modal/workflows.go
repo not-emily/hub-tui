@@ -3,6 +3,7 @@ package modal
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -122,7 +123,18 @@ func (m *WorkflowsModal) View() string {
 	disabledStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
 	selectedStyle := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
 	normalStyle := lipgloss.NewStyle().Foreground(theme.TextPrimary)
-	descStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+	dimStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+
+	// Calculate max name length for alignment
+	maxNameLen := 0
+	for _, wf := range m.workflows {
+		if len(wf.Name) > maxNameLen {
+			maxNameLen = len(wf.Name)
+		}
+	}
+	if maxNameLen < 15 {
+		maxNameLen = 15
+	}
 
 	for i, wf := range m.workflows {
 		// Status indicator
@@ -141,16 +153,44 @@ func (m *WorkflowsModal) View() string {
 			name = normalStyle.Render(wf.Name)
 		}
 
-		// Build line with description
-		line := fmt.Sprintf("  %s %s", indicator, name)
-		if wf.Description != "" {
-			// Pad name to align descriptions
-			padding := 20 - len(wf.Name)
-			if padding < 2 {
-				padding = 2
-			}
-			line += strings.Repeat(" ", padding) + descStyle.Render(wf.Description)
+		// Pad name for alignment
+		namePadding := maxNameLen - len(wf.Name) + 2
+		if namePadding < 2 {
+			namePadding = 2
 		}
+
+		// Trigger info column
+		var triggerInfo string
+		switch wf.Trigger.Type {
+		case "schedule":
+			if wf.Frequency != "" {
+				triggerInfo = wf.Frequency
+			} else {
+				triggerInfo = "scheduled"
+			}
+		case "manual":
+			triggerInfo = "manual"
+		case "webhook":
+			triggerInfo = "webhook"
+		case "condition":
+			triggerInfo = "condition"
+		default:
+			triggerInfo = "manual" // default fallback
+		}
+
+		// Next run for scheduled workflows
+		var nextRunInfo string
+		if wf.Trigger.Type == "schedule" && wf.NextRun != nil {
+			nextRunInfo = "  Next: " + formatRelativeTime(*wf.NextRun)
+		}
+
+		line := fmt.Sprintf("  %s %s%s%s%s",
+			indicator,
+			name,
+			strings.Repeat(" ", namePadding),
+			dimStyle.Render(triggerInfo),
+			dimStyle.Render(nextRunInfo),
+		)
 
 		lines = append(lines, line)
 	}
@@ -163,4 +203,35 @@ func (m *WorkflowsModal) View() string {
 	lines = append(lines, legendStyle.Render("  Use #workflow to run  [r] Refresh"))
 
 	return strings.Join(lines, "\n")
+}
+
+// formatRelativeTime formats a time as a human-readable relative duration.
+func formatRelativeTime(t time.Time) string {
+	now := time.Now()
+	if t.Before(now) {
+		return "overdue"
+	}
+
+	d := t.Sub(now)
+
+	if d < time.Minute {
+		return "< 1m"
+	} else if d < time.Hour {
+		mins := int(d.Minutes())
+		return fmt.Sprintf("%dm", mins)
+	} else if d < 24*time.Hour {
+		hours := int(d.Hours())
+		mins := int(d.Minutes()) % 60
+		if mins > 0 {
+			return fmt.Sprintf("%dh %dm", hours, mins)
+		}
+		return fmt.Sprintf("%dh", hours)
+	}
+
+	days := int(d.Hours() / 24)
+	hours := int(d.Hours()) % 24
+	if hours > 0 {
+		return fmt.Sprintf("%dd %dh", days, hours)
+	}
+	return fmt.Sprintf("%dd", days)
 }

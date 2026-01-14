@@ -3,36 +3,28 @@
 ## Plan Files
 Roadmap: [v4-config-types plan](../docs/plan/plan.md)
 Current Phase: Complete (all phases done)
-Latest Weekly Report: [weekly-2026-W01.md](../docs/reports/weekly-2026-W01.md)
+Latest Weekly Report: [weekly-2026-W02.md](../docs/reports/weekly-2026-W02.md)
 Archived: [v1-initial-build](../docs/plan/_archived/v1-initial-build/), [v2-llm-profiles](../docs/plan/_archived/v2-llm-profiles/), [v3-param-collection](../docs/plan/_archived/v3-param-collection/)
 
-Last Updated: 2026-01-07
+Last Updated: 2026-01-14
 
 ## Current Focus
-QoL improvements: Autocomplete UX and workflow cancel hint
+QoL improvements and bug fixes
 
 ## Active Tasks
-- [IN PROGRESS] Autocomplete & Workflow UX improvements (uncommitted)
-  - ✓ Auto-show autocomplete when typing /, @, #
-  - ✓ Enter executes / commands and # workflows directly
-  - ✓ Enter completes @ assistants (for typing message)
-  - ✓ Shift+C to cancel tracked workflow with 30s hint
-  - ✓ Single active hint model (new workflow clears previous)
-  - ⏳ Ready to commit
+None currently
 
 ## Open Questions/Blockers
-- hub-core bug: dismiss endpoint returns "run not found" for valid runs
+None
 
 ## Completed This Week
-- Parameter Collection Form - all phases complete (from previous week)
-- v4-config-types planning complete
-- v4-config-types implementation complete (all 6 phases)
-  - Phase 1: Client layer updates
-  - Phase 2: Integration type routing
-  - Phase 3: LLM config view
-  - Phase 4: Provider management
-  - Phase 5: Profile form with cascading dropdowns
-  - Phase 6: Cleanup - removed standalone /llm command
+- Settings modal edit mode
+  - Added [e] to enter edit mode from /settings
+  - Server URL editable with form component
+  - Ctrl+S to save, Esc to cancel
+  - On save: updates client, clears token, returns to login for new server
+- Fix status bar missing server URL on auto-connect
+  - Added SetServerURL call when reconnecting with saved token
 
 ## Future Enhancements (not in current plan)
 - oauth config type (requires browser redirect flow)
@@ -41,7 +33,7 @@ QoL improvements: Autocomplete UX and workflow cancel hint
 - Workflow delete (API: DELETE /workflows/{name})
 - Rich array editing with add/remove buttons
 - Nested object forms instead of JSON textarea
-- Soften "run not found" error for already-completed workflows on cancel
+- Workflow output format hints (server sends output_format: markdown/json for rendering)
 
 ## Next Session
-Commit the autocomplete/workflow UX changes, then decide on next enhancement
+Decide on next enhancement or QoL improvement

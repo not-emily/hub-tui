@@ -3,13 +3,23 @@ package client
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
+
+// Trigger represents how a workflow is triggered.
+type Trigger struct {
+	Type string `json:"type"` // "schedule", "manual", "webhook", "condition"
+	Cron string `json:"cron,omitempty"`
+}
 
 // Workflow represents a workflow from hub-core.
 type Workflow struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Enabled     bool   `json:"enabled"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Trigger     Trigger    `json:"trigger"`
+	Enabled     bool       `json:"enabled"`
+	NextRun     *time.Time `json:"next_run,omitempty"`  // only for scheduled workflows
+	Frequency   string     `json:"frequency,omitempty"` // human-readable schedule, only for scheduled
 }
 
 // workflowsResponse is the API response wrapper.
