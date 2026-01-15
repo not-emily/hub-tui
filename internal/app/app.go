@@ -467,6 +467,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case modal.RefreshConnectionMsg:
+		// Trigger health check to refresh connection status
+		return m, m.doHealthCheck()
+
 	case WorkflowStartedMsg:
 		return m.handleWorkflowStarted(msg)
 
@@ -745,6 +749,11 @@ func (m Model) handleLoginResult(msg LoginResultMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleHealthCheck(msg HealthCheckMsg) (tea.Model, tea.Cmd) {
+	// Update settings modal if open
+	if settingsModal, ok := m.modal.Active.(*modal.SettingsModal); ok {
+		settingsModal.SetConnected(msg.Success)
+	}
+
 	if msg.Success {
 		m.statusBar.SetState(status.StateConnected)
 		// Trigger cache refresh and task loading after successful connection

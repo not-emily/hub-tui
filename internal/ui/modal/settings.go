@@ -18,13 +18,17 @@ type SettingsSavedMsg struct {
 	Error  error
 }
 
+// RefreshConnectionMsg is sent when the user requests a connection refresh.
+type RefreshConnectionMsg struct{}
+
 // SettingsModal displays and edits configuration.
 type SettingsModal struct {
-	config    *config.Config
-	connected bool
-	editing   bool
-	form      *components.Form
-	error     string
+	config     *config.Config
+	connected  bool
+	refreshing bool
+	editing    bool
+	form       *components.Form
+	error      string
 }
 
 // NewSettingsModal creates a new settings modal.
@@ -33,6 +37,12 @@ func NewSettingsModal(cfg *config.Config, connected bool) *SettingsModal {
 		config:    cfg,
 		connected: connected,
 	}
+}
+
+// SetConnected updates the connection status.
+func (m *SettingsModal) SetConnected(connected bool) {
+	m.connected = connected
+	m.refreshing = false
 }
 
 // Init initializes the modal.
@@ -81,6 +91,10 @@ func (m *SettingsModal) updateViewing(msg tea.KeyMsg) (Modal, tea.Cmd) {
 				Type:  components.FieldText,
 			},
 		})
+	case "r":
+		// Refresh connection
+		m.refreshing = true
+		return m, func() tea.Msg { return RefreshConnectionMsg{} }
 	}
 	return m, nil
 }
@@ -169,7 +183,9 @@ func (m *SettingsModal) viewDisplay() string {
 
 	// Connection status
 	var connStatus string
-	if m.connected {
+	if m.refreshing {
+		connStatus = hintStyle.Render("Checking...")
+	} else if m.connected {
 		connStatus = successStyle.Render("Connected")
 	} else {
 		connStatus = errorStyle.Render("Disconnected")
@@ -196,7 +212,7 @@ func (m *SettingsModal) viewDisplay() string {
 	)
 
 	lines = append(lines, "")
-	lines = append(lines, hintStyle.Render("[e] Edit"))
+	lines = append(lines, hintStyle.Render("[e] Edit  [r] Refresh"))
 
 	return strings.Join(lines, "\n")
 }
