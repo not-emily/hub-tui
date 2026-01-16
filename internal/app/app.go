@@ -322,6 +322,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case modal.LLMProviderFieldsMsg:
+		if msg.Err != nil && client.IsAuthError(msg.Err) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
 	case modal.LLMProviderSavedMsg:
 		if msg.Err != nil && client.IsAuthError(msg.Err) {
 			return m.handleAuthExpired()

@@ -44,6 +44,13 @@ type LLMAvailableProvidersMsg struct {
 	Err       error
 }
 
+// LLMProviderFieldsMsg is sent when provider field requirements are loaded.
+type LLMProviderFieldsMsg struct {
+	Provider string
+	Fields   []client.ProviderFieldInfo
+	Err      error
+}
+
 // LLMProviderSavedMsg is sent when a provider is added.
 type LLMProviderSavedMsg struct {
 	Err error
@@ -286,21 +293,51 @@ func (m *IntegrationsModal) updateLLMProviderForm(msg tea.KeyMsg) (Modal, tea.Cm
 	case "esc":
 		m.view = viewConfigLLM
 		m.llmProviderForm = nil
+		m.llmProviderFields = nil
 		m.llmError = ""
 		return m, nil
 
 	case "ctrl+s":
 		if !m.llmSavingProvider && m.llmProviderForm != nil {
+			// Validate before saving
+			if err := m.validateProviderForm(); err != nil {
+				m.llmError = err.Error()
+				return m, nil
+			}
 			m.llmSavingProvider = true
 			return m, m.saveProvider()
 		}
 		return m, nil
 	}
 
+	// Track provider before form update
+	prevProvider := ""
+	if m.llmProviderForm != nil {
+		prevProvider = m.llmProviderForm.GetFieldValue("provider")
+	}
+
 	// Forward to form
 	if m.llmProviderForm != nil {
 		m.llmProviderForm.Update(msg)
 	}
+
+	// Check if provider changed
+	newProvider := m.llmProviderForm.GetFieldValue("provider")
+	if newProvider != prevProvider && newProvider != "" {
+		// Map display name to provider name
+		providerName := ""
+		for _, p := range m.llmAvailableProviders {
+			if p.DisplayName == newProvider {
+				providerName = p.Name
+				break
+			}
+		}
+		if providerName != "" {
+			m.llmError = "" // Clear any previous error
+			return m, m.loadProviderFields(providerName)
+		}
+	}
+
 	return m, nil
 }
 
@@ -333,6 +370,7 @@ func (m *IntegrationsModal) handleLLMAvailableProviders(msg LLMAvailableProvider
 		providerOptions[i] = p.DisplayName
 	}
 
+	// Build initial form with just provider and account (fields loaded after provider selection)
 	m.llmProviderForm = components.NewForm("Add Provider Account", []components.FormField{
 		{
 			Label:   "Provider",
@@ -346,15 +384,114 @@ func (m *IntegrationsModal) handleLLMAvailableProviders(msg LLMAvailableProvider
 			Type:  components.FieldText,
 			Value: "default",
 		},
-		{
-			Label:    "API Key",
-			Key:      "api_key",
-			Type:     components.FieldText,
-			Password: true,
-		},
 	})
 
+	// Clear any previous field requirements
+	m.llmProviderFields = nil
+
+	// Fetch fields for first provider
+	if len(m.llmAvailableProviders) > 0 {
+		return m, m.loadProviderFields(m.llmAvailableProviders[0].Name)
+	}
+
 	return m, nil
+}
+
+// loadProviderFields fetches field requirements for the selected provider.
+func (m *IntegrationsModal) loadProviderFields(providerName string) tea.Cmd {
+	m.llmLoadingFields = true
+	integration := m.llmIntegration.Name
+	return func() tea.Msg {
+		fields, err := m.client.GetLLMProviderFields(integration, providerName)
+		if err != nil {
+			return LLMProviderFieldsMsg{Provider: providerName, Err: err}
+		}
+		return LLMProviderFieldsMsg{Provider: providerName, Fields: fields}
+	}
+}
+
+// handleLLMProviderFields processes the loaded provider field requirements.
+func (m *IntegrationsModal) handleLLMProviderFields(msg LLMProviderFieldsMsg) (Modal, tea.Cmd) {
+	m.llmLoadingFields = false
+	if msg.Err != nil {
+		m.llmError = msg.Err.Error()
+		return m, nil
+	}
+
+	m.llmProviderFields = msg.Fields
+	m.rebuildProviderForm()
+	return m, nil
+}
+
+// rebuildProviderForm rebuilds the provider form with dynamic fields.
+func (m *IntegrationsModal) rebuildProviderForm() {
+	// Get current values to preserve
+	currentAccount := "default"
+	currentProvider := ""
+	if m.llmProviderForm != nil {
+		currentAccount = m.llmProviderForm.GetFieldValue("account")
+		currentProvider = m.llmProviderForm.GetFieldValue("provider")
+	}
+
+	// Build provider options
+	providerOptions := make([]string, len(m.llmAvailableProviders))
+	for i, p := range m.llmAvailableProviders {
+		providerOptions[i] = p.DisplayName
+	}
+
+	// Start with static fields
+	fields := []components.FormField{
+		{
+			Label:   "Provider",
+			Key:     "provider",
+			Type:    components.FieldSelect,
+			Options: providerOptions,
+			Value:   currentProvider,
+		},
+		{
+			Label: "Account Name",
+			Key:   "account",
+			Type:  components.FieldText,
+			Value: currentAccount,
+		},
+	}
+
+	// Add dynamic fields from provider requirements
+	for _, f := range m.llmProviderFields {
+		field := components.FormField{
+			Label:    f.Label,
+			Key:      f.Key,
+			Type:     components.FieldText,
+			Value:    f.Default,
+			Password: f.Secret,
+			Required: f.Required,
+		}
+		fields = append(fields, field)
+	}
+
+	m.llmProviderForm = components.NewForm("Add Provider Account", fields)
+}
+
+// validateProviderForm validates the provider form before saving.
+func (m *IntegrationsModal) validateProviderForm() error {
+	values := m.llmProviderForm.Values()
+
+	// Check account name
+	if strings.TrimSpace(values["account"]) == "" {
+		return fmt.Errorf("account name is required")
+	}
+
+	// Check required dynamic fields
+	for _, f := range m.llmProviderFields {
+		if f.Required {
+			val := strings.TrimSpace(values[f.Key])
+			if val == "" {
+				return fmt.Errorf("%s is required", f.Label)
+			}
+		}
+	}
+
+	return nil
 }
 
 // saveProvider saves the provider from the form.
@@ -371,11 +508,19 @@ func (m *IntegrationsModal) saveProvider() tea.Cmd {
 		}
 	}
 
+	// Build fields map from dynamic fields (only include non-empty values)
+	fields := make(map[string]string)
+	for _, f := range m.llmProviderFields {
+		if val, ok := values[f.Key]; ok && val != "" {
+			fields[f.Key] = val
+		}
+	}
+
 	integration := m.llmIntegration.Name
 	req := client.AddProviderRequest{
 		Provider: providerName,
 		Account:  values["account"],
-		APIKey:   values["api_key"],
+		Fields:   fields,
 	}
 
 	return func() tea.Msg {
@@ -1078,6 +1223,14 @@ func (m *IntegrationsModal) viewLLMProviderForm() string {
 	// Show form
 	if m.llmProviderForm != nil {
 		lines = append(lines, m.llmProviderForm.View())
+	}
+
+	// Show loading indicator for fields
+	if m.llmLoadingFields {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().
+			Foreground(theme.TextSecondary).
+			Render("  Loading fields..."))
 	}
 
 	// Show error if any

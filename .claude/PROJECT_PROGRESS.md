@@ -1,12 +1,12 @@
 # Project Progress - hub-tui
 
 ## Plan Files
-Roadmap: [v4-config-types plan](../docs/plan/plan.md)
+Roadmap: [v5-dynamic-provider-fields plan](../docs/plan/plan.md)
 Current Phase: Complete (all phases done)
 Latest Weekly Report: [weekly-2026-W02.md](../docs/reports/weekly-2026-W02.md)
-Archived: [v1-initial-build](../docs/plan/_archived/v1-initial-build/), [v2-llm-profiles](../docs/plan/_archived/v2-llm-profiles/), [v3-param-collection](../docs/plan/_archived/v3-param-collection/)
+Archived: [v1-initial-build](../docs/plan/_archived/v1-initial-build/), [v2-llm-profiles](../docs/plan/_archived/v2-llm-profiles/), [v3-param-collection](../docs/plan/_archived/v3-param-collection/), [v4-config-types](../docs/plan/_archived/v4-config-types/)
 
-Last Updated: 2026-01-14
+Last Updated: 2026-01-16
 
 ## Current Focus
 QoL improvements and bug fixes
@@ -25,6 +25,13 @@ None
   - On save: updates client, clears token, returns to login for new server
 - Fix status bar missing server URL on auto-connect
   - Added SetServerURL call when reconnecting with saved token
+- Dynamic provider fields (v5-dynamic-provider-fields)
+  - Added ProviderFieldInfo type and GetLLMProviderFields API method
+  - Changed AddProviderRequest to use Fields map instead of hardcoded api_key
+  - Provider form fetches field requirements when provider is selected
+  - Form dynamically renders fields based on provider (api_key, base_url, etc.)
+  - Fields respect required/secret/default properties
+  - Client-side validation for required fields before submit
 
 ## Future Enhancements (not in current plan)
 - oauth config type (requires browser redirect flow)

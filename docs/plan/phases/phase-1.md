@@ -1,170 +1,95 @@
-# Phase 1: Client Layer Updates
+# Phase 1: Client Layer
 
 > **Depends on:** None
-> **Enables:** Phase 2 (Modal Routing)
+> **Enables:** Phase 2 (Dynamic Provider Form)
 >
 > See: [Full Plan](../plan.md)
 
 ## Goal
 
-Update client types and methods to match the new hub-core API structure for config-type-aware integrations.
+Add types and API method to support the new provider fields endpoint and request format.
 
 ## Key Deliverables
 
-- `Integration` struct updated with `ConfigType` field and LLM summary fields
-- New `integrations_llm.go` with all LLM config type methods and types
-- All methods use new `/integrations/{name}/*` endpoint structure
-
-## Files to Create
-
-- `internal/client/integrations_llm.go` — LLM config type client methods and types
+- `ProviderFieldInfo` struct for field metadata
+- `GetLLMProviderFields()` method to fetch field requirements
+- Updated `AddProviderRequest` with `Fields map[string]string`
 
 ## Files to Modify
 
-- `internal/client/integrations.go` — Update `Integration` struct, add `ConfigureAPIKey` method
-
-## Dependencies
-
-**Internal:** None
-
-**External:** None (uses existing net/http client)
+- `internal/client/integrations_llm.go` — Add type, method, update request struct
 
 ## Implementation Notes
 
-### Integration Type Updates
-
-Update the `Integration` struct to include:
+### ProviderFieldInfo Type
 
 ```go
-type Integration struct {
-    Name           string   `json:"name"`
-    DisplayName    string   `json:"display_name"`
-    Type           string   `json:"type"`        // "api", "cli", "mcp"
-    ConfigType     string   `json:"config_type"` // "api_key", "llm", etc.
-    Configured     bool     `json:"configured"`
-    Profiles       []string `json:"profiles,omitempty"`
-    DefaultProfile string   `json:"default_profile,omitempty"`
-    Fields         []string `json:"fields,omitempty"`
-    // LLM type summary fields (for list display)
-    ProviderCount  int      `json:"provider_count,omitempty"`
-    ProfileCount   int      `json:"profile_count,omitempty"`
+// ProviderFieldInfo describes a configuration field required by a provider.
+type ProviderFieldInfo struct {
+    Key      string `json:"key"`      // Field identifier (e.g., "api_key", "base_url")
+    Label    string `json:"label"`    // Human-readable label for UI
+    Required bool   `json:"required"` // Whether field must be provided
+    Secret   bool   `json:"secret"`   // Whether to mask input (passwords, API keys)
+    Default  string `json:"default"`  // Default value if not provided
 }
 ```
 
-### LLM Types (integrations_llm.go)
+### GetLLMProviderFields Method
 
 ```go
-type ProviderAccount struct {
-    Provider    string   `json:"provider"`
-    DisplayName string   `json:"display_name"`
-    Accounts    []string `json:"accounts"`
+// providerFieldsResponse is the API response for provider fields.
+type providerFieldsResponse struct {
+    Fields []ProviderFieldInfo `json:"fields"`
 }
 
-type AvailableProvider struct {
-    Name        string `json:"name"`
-    DisplayName string `json:"display_name"`
-}
+// GetLLMProviderFields fetches field requirements for a provider.
+func (c *Client) GetLLMProviderFields(integration, provider string) ([]ProviderFieldInfo, error) {
+    resp, err := c.get("/integrations/" + integration + "/providers/" + provider + "/fields")
+    if err != nil {
+        return nil, fmt.Errorf("cannot connect to server: %w", err)
+    }
+    defer resp.Body.Close()
 
-type LLMProfile struct {
-    Name      string `json:"name"`
-    Provider  string `json:"provider"`
-    Account   string `json:"account"`
-    Model     string `json:"model"`
-    IsDefault bool   `json:"is_default"`
-}
+    if resp.StatusCode != 200 {
+        return nil, parseError(resp)
+    }
 
-type LLMProfileList struct {
-    Profiles []LLMProfile `json:"profiles"`
-}
+    var result providerFieldsResponse
+    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+        return nil, fmt.Errorf("invalid response from server: %w", err)
+    }
 
+    return result.Fields, nil
+}
+```
+
+### Updated AddProviderRequest
+
+Change from:
+```go
 type AddProviderRequest struct {
     Provider string `json:"provider"`
     Account  string `json:"account"`
     APIKey   string `json:"api_key"`
 }
-
-type CreateProfileRequest struct {
-    Name     string `json:"name"`
-    Provider string `json:"provider"`
-    Account  string `json:"account"`
-    Model    string `json:"model"`
-}
-
-type UpdateProfileRequest struct {
-    Name     string `json:"name,omitempty"` // for rename
-    Provider string `json:"provider"`
-    Account  string `json:"account"`
-    Model    string `json:"model"`
-}
-
-type LLMTestResult struct {
-    Success   bool   `json:"success"`
-    Model     string `json:"model"`
-    LatencyMs int    `json:"latency_ms"`
-    Error     string `json:"error,omitempty"`
-}
 ```
 
-### LLM Methods (integrations_llm.go)
-
-All methods take `integration string` as first parameter for future-proofing:
-
+To:
 ```go
-// Providers
-func (c *Client) ListLLMProviders(integration string) ([]ProviderAccount, error)
-// GET /integrations/{integration}/providers
-
-func (c *Client) ListAvailableLLMProviders(integration string) ([]AvailableProvider, error)
-// GET /integrations/{integration}/providers/available
-
-func (c *Client) AddLLMProvider(integration string, req AddProviderRequest) error
-// POST /integrations/{integration}/providers
-
-func (c *Client) DeleteLLMProvider(integration, provider, account string) error
-// DELETE /integrations/{integration}/providers/{provider}/{account}
-
-// Profiles
-func (c *Client) ListLLMProfiles(integration string) (*LLMProfileList, error)
-// GET /integrations/{integration}/profiles
-
-func (c *Client) CreateLLMProfile(integration string, req CreateProfileRequest) error
-// POST /integrations/{integration}/profiles
-
-func (c *Client) UpdateLLMProfile(integration, name string, req UpdateProfileRequest) error
-// PUT /integrations/{integration}/profiles/{name} (if update exists, else use Create)
-
-func (c *Client) DeleteLLMProfile(integration, profile string) error
-// DELETE /integrations/{integration}/profiles/{profile}
-
-func (c *Client) TestLLMProfile(integration, profile string) (*LLMTestResult, error)
-// POST /integrations/{integration}/profiles/{profile}/test
-
-func (c *Client) SetDefaultLLMProfile(integration, profile string) error
-// PUT /integrations/{integration}/profiles/set-default with {"profile": "..."}
+type AddProviderRequest struct {
+    Provider string            `json:"provider"`
+    Account  string            `json:"account"`
+    Fields   map[string]string `json:"fields"`
+}
 ```
 
-### API Endpoint Reference
+### Update saveProvider in modal
 
-Refer to hub-core API docs at `../hub-core/docs/api/README.md` for exact request/response formats.
-
-Key endpoints:
-- `GET /integrations` — Returns integrations with `config_type` field
-- `GET /integrations/llm/providers` — List configured providers
-- `GET /integrations/llm/providers/available` — List all supported providers
-- `POST /integrations/llm/providers` — Add provider account
-- `DELETE /integrations/llm/providers/{provider}/{account}` — Remove provider account
-- `GET /integrations/llm/profiles` — List LLM profiles
-- `POST /integrations/llm/profiles` — Create profile
-- `DELETE /integrations/llm/profiles/{name}` — Delete profile
-- `POST /integrations/llm/profiles/{name}/test` — Test profile
-- `PUT /integrations/llm/profiles/set-default` — Set default profile
+The `saveProvider()` function in `integrations_llm.go` will need to be updated in Phase 2 to build the `Fields` map from form values instead of using `APIKey`.
 
 ## Validation
 
-- [ ] `go build` succeeds with no errors
-- [ ] `Integration` struct has `ConfigType` field
-- [ ] All LLM types defined in `integrations_llm.go`
-- [ ] All LLM methods implemented with correct endpoints
-- [ ] Methods return appropriate errors for non-2xx responses
-- [ ] Manual test: `ListIntegrations()` returns integrations with `config_type` populated
-- [ ] Manual test: `ListLLMProviders("llm")` returns provider accounts
+- [ ] `ProviderFieldInfo` struct added with correct JSON tags
+- [ ] `GetLLMProviderFields()` method added and compiles
+- [ ] `AddProviderRequest` uses `Fields map[string]string` instead of `APIKey`
+- [ ] Code compiles (modal will have build errors until Phase 2)

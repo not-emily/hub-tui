@@ -24,6 +24,15 @@ type AvailableProvider struct {
 	DisplayName string `json:"display_name"` // e.g., "OpenAI"
 }
 
+// ProviderFieldInfo describes a configuration field required by a provider.
+type ProviderFieldInfo struct {
+	Key      string `json:"key"`      // Field identifier (e.g., "api_key", "base_url")
+	Label    string `json:"label"`    // Human-readable label for UI
+	Required bool   `json:"required"` // Whether field must be provided
+	Secret   bool   `json:"secret"`   // Whether to mask input (passwords, API keys)
+	Default  string `json:"default"`  // Default value if not provided
+}
+
 // LLMProfile represents an LLM profile configuration.
 type LLMProfile struct {
 	Name      string `json:"name"`
@@ -40,9 +49,9 @@ type LLMProfileList struct {
 
 // AddProviderRequest is the request body for adding a provider account.
 type AddProviderRequest struct {
-	Provider string `json:"provider"`
-	Account  string `json:"account"`
-	APIKey   string `json:"api_key"`
+	Provider string            `json:"provider"`
+	Account  string            `json:"account"`
+	Fields   map[string]string `json:"fields"`
 }
 
 // CreateProfileRequest is the request body for creating an LLM profile.
@@ -111,6 +120,31 @@ func (c *Client) ListAvailableLLMProviders(integration string) ([]AvailableProvi
 	}
 
 	return result.Providers, nil
+}
+
+// providerFieldsResponse is the API response for provider fields.
+type providerFieldsResponse struct {
+	Fields []ProviderFieldInfo `json:"fields"`
+}
+
+// GetLLMProviderFields fetches field requirements for a provider.
+func (c *Client) GetLLMProviderFields(integration, provider string) ([]ProviderFieldInfo, error) {
+	resp, err := c.get("/integrations/" + integration + "/providers/" + provider + "/fields")
+	if err != nil {
+		return nil, fmt.Errorf("cannot connect to server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, parseError(resp)
+	}
+
+	var result providerFieldsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("invalid response from server: %w", err)
+	}
+
+	return result.Fields, nil
 }
 
 // AddLLMProvider adds a new provider account to an LLM integration.

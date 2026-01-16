@@ -65,6 +65,8 @@ type IntegrationsModal struct {
 	// LLM provider form state
 	llmProviderForm       *components.Form
 	llmAvailableProviders []client.AvailableProvider
+	llmProviderFields     []client.ProviderFieldInfo // Field requirements for selected provider
+	llmLoadingFields      bool                       // Loading field requirements
 	llmSavingProvider     bool
 
 	// LLM profile form state
@@ -186,6 +188,9 @@ func (m *IntegrationsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	case LLMAvailableProvidersMsg:
 		return m.handleLLMAvailableProviders(msg)
 
+	case LLMProviderFieldsMsg:
+		return m.handleLLMProviderFields(msg)
+
 	case LLMProviderSavedMsg:
 		return m.handleLLMProviderSaved(msg)
 
@@ -194,6 +199,7 @@ func (m *IntegrationsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 
 	case LLMErrorMsg:
 		m.llmLoading = false
+		m.llmLoadingFields = false
 		m.llmSavingProvider = false
 		m.llmSavingProfile = false
 		m.llmLoadingModels = false
