@@ -21,6 +21,9 @@ type SettingsSavedMsg struct {
 // RefreshConnectionMsg is sent when the user requests a connection refresh.
 type RefreshConnectionMsg struct{}
 
+// LogoutMsg is sent when the user requests to logout.
+type LogoutMsg struct{}
+
 // SettingsModal displays and edits configuration.
 type SettingsModal struct {
 	config     *config.Config
@@ -29,6 +32,7 @@ type SettingsModal struct {
 	editing    bool
 	form       *components.Form
 	error      string
+	confirm    *components.Confirmation
 }
 
 // NewSettingsModal creates a new settings modal.
@@ -36,6 +40,7 @@ func NewSettingsModal(cfg *config.Config, connected bool) *SettingsModal {
 	return &SettingsModal{
 		config:    cfg,
 		connected: connected,
+		confirm:   components.NewConfirmation(),
 	}
 }
 
@@ -65,6 +70,10 @@ func (m *SettingsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		}
 		return m, nil
 
+	case components.ConfirmationExpiredMsg:
+		m.confirm.HandleExpired(msg)
+		return m, nil
+
 	case tea.KeyMsg:
 		if m.editing {
 			return m.updateEditing(msg)
@@ -78,8 +87,10 @@ func (m *SettingsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 func (m *SettingsModal) updateViewing(msg tea.KeyMsg) (Modal, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
+		m.confirm.Clear()
 		return nil, nil // Close modal
 	case "e":
+		m.confirm.Clear()
 		// Enter edit mode
 		m.editing = true
 		m.error = ""
@@ -92,9 +103,17 @@ func (m *SettingsModal) updateViewing(msg tea.KeyMsg) (Modal, tea.Cmd) {
 			},
 		})
 	case "r":
+		m.confirm.Clear()
 		// Refresh connection
 		m.refreshing = true
 		return m, func() tea.Msg { return RefreshConnectionMsg{} }
+	case "l":
+		// Logout with confirmation
+		if execute, cmd := m.confirm.Check("logout", ""); execute {
+			return m, func() tea.Msg { return LogoutMsg{} }
+		} else if cmd != nil {
+			return m, cmd
+		}
 	}
 	return m, nil
 }
@@ -212,7 +231,14 @@ func (m *SettingsModal) viewDisplay() string {
 	)
 
 	lines = append(lines, "")
-	lines = append(lines, hintStyle.Render("[e] Edit  [r] Refresh"))
+
+	// Show confirmation hint or regular hints
+	if m.confirm.IsPending("logout", "") {
+		warningStyle := lipgloss.NewStyle().Foreground(theme.Warning)
+		lines = append(lines, warningStyle.Render("Press l again to logout"))
+	} else {
+		lines = append(lines, hintStyle.Render("[e] Edit  [r] Refresh  [l] Logout"))
+	}
 
 	return strings.Join(lines, "\n")
 }

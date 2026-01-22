@@ -480,6 +480,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Trigger health check to refresh connection status
 		return m, m.doHealthCheck()
 
+	case modal.LogoutMsg:
+		// Clear token and return to login
+		m.config.Token = ""
+		m.config.TokenExp = ""
+		_ = m.config.Save()
+		m.client.SetToken("")
+		m.modal.Close()
+		m.state = StateLogin
+		m.login = login.New(false, m.config.ServerURL)
+		m.login.SetSize(m.width, m.height)
+		m.statusBar.SetState(status.StateDisconnected)
+		return m, nil
+
 	case WorkflowStartedMsg:
 		return m.handleWorkflowStarted(msg)
 

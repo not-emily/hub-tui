@@ -143,6 +143,14 @@ func (m Model) Password() string {
 	return m.password.Value()
 }
 
+// EnableServerURLEdit enables editing of the server URL field.
+func (m *Model) EnableServerURLEdit() {
+	m.NeedsServerURL = true
+	m.blurCurrent()
+	m.focused = FieldServerURL
+	m.serverURL.Focus()
+}
+
 // Update handles input events.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if m.state == StateConnecting {
@@ -165,6 +173,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			m.nextField()
 			return m, nil
+		case "ctrl+s":
+			// Enable server URL editing
+			if !m.NeedsServerURL {
+				m.EnableServerURLEdit()
+				return m, nil
+			}
 		}
 	}
 
@@ -272,10 +286,18 @@ func (m Model) View() string {
 	b.WriteString(title)
 	b.WriteString("\n\n")
 
-	// Server URL field (if needed)
+	// Server URL field
 	if m.NeedsServerURL {
+		// Editable server URL
 		b.WriteString(m.renderField("Server URL", m.serverURL.View(), m.focused == FieldServerURL))
 		b.WriteString("\n")
+	} else if m.serverURL.Value() != "" {
+		// Show current server URL (read-only) with hint to change
+		serverStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+		serverVal := lipgloss.NewStyle().Foreground(theme.TextPrimary).Render(m.serverURL.Value())
+		changeHint := lipgloss.NewStyle().Foreground(theme.TextSecondary).Italic(true).Render(" [Ctrl+S to change]")
+		b.WriteString(serverStyle.Render("Server:      ") + serverVal + changeHint)
+		b.WriteString("\n\n")
 	}
 
 	// Username field
