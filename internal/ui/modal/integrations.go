@@ -3,6 +3,7 @@ package modal
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -21,6 +22,7 @@ const (
 	viewConfigure
 	viewCheckingDependencies
 	viewDependencyBlocked
+	viewHubUpdating
 )
 
 // LLM config type views (offset to avoid collision, defined in integrations_llm.go)
@@ -50,8 +52,15 @@ type IntegrationsModal struct {
 	selectedDepIndex int    // Selected dependency in list
 
 	// Dependency check state (for blocking config until deps satisfied)
-	pendingIntegration client.Integration // Integration waiting for dependency check
+	pendingIntegration client.Integration  // Integration waiting for dependency check
 	unsatisfiedDeps    []client.Dependency // Dependencies that need to be installed
+
+	// Hub update state
+	hubUpdateInfo    *client.HubUpdateInfo
+	hubUpdateLoading bool
+	hubUpdateError   string
+	hubUpdateConfirm bool // Confirmation dialog state
+	hubUpdating      bool // Update in progress
 
 	// Current view
 	view integrationsView
@@ -156,6 +165,22 @@ type DependencyCheckMsg struct {
 	Err          error
 }
 
+// HubUpdatesLoadedMsg is sent when hub update info is loaded.
+type HubUpdatesLoadedMsg struct {
+	UpdateInfo *client.HubUpdateInfo
+	Err        error
+}
+
+// HubUpdateAppliedMsg is sent when hub update is applied.
+type HubUpdateAppliedMsg struct {
+	Success bool
+	Message string
+	Err     error
+}
+
+// HubUpdateConfirmExpiredMsg is sent when the update confirmation times out.
+type HubUpdateConfirmExpiredMsg struct{}
+
 // Init initializes the modal and triggers data fetch.
 func (m *IntegrationsModal) Init() tea.Cmd {
 	return m.loadIntegrations()
@@ -200,6 +225,23 @@ func (m *IntegrationsModal) installDependency(name, version string) tea.Cmd {
 			return DependencyInstalledMsg{Name: name, Err: err}
 		}
 		return DependencyInstalledMsg{Name: name, Status: &result.Status, Err: nil}
+	}
+}
+
+func (m *IntegrationsModal) checkHubUpdates() tea.Cmd {
+	return func() tea.Msg {
+		info, err := m.client.GetHubUpdates()
+		return HubUpdatesLoadedMsg{UpdateInfo: info, Err: err}
+	}
+}
+
+func (m *IntegrationsModal) applyHubUpdate() tea.Cmd {
+	return func() tea.Msg {
+		result, err := m.client.ApplyHubUpdate()
+		if err != nil {
+			return HubUpdateAppliedMsg{Success: false, Err: err}
+		}
+		return HubUpdateAppliedMsg{Success: result.Success, Message: result.Message, Err: nil}
 	}
 }
 
@@ -359,6 +401,37 @@ func (m *IntegrationsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		m.depError = ""
 		return m, nil
 
+	case HubUpdatesLoadedMsg:
+		m.hubUpdateLoading = false
+		if msg.Err != nil {
+			// Check if 404 (repo is private)
+			if apiErr, ok := msg.Err.(*client.APIError); ok && apiErr.StatusCode == 404 {
+				m.hubUpdateError = "Updates not available (repository is private)"
+			} else {
+				m.hubUpdateError = msg.Err.Error()
+			}
+			return m, nil
+		}
+		m.hubUpdateInfo = msg.UpdateInfo
+		m.hubUpdateError = ""
+		return m, nil
+
+	case HubUpdateAppliedMsg:
+		if msg.Err != nil {
+			m.hubUpdateError = fmt.Sprintf("Update failed: %s", msg.Err.Error())
+			m.hubUpdating = false
+			return m, nil
+		}
+		// Update initiated, server will restart
+		m.hubUpdateError = ""
+		m.hubUpdating = true
+		m.view = viewHubUpdating
+		return m, nil
+
+	case HubUpdateConfirmExpiredMsg:
+		m.hubUpdateConfirm = false
+		return m, nil
+
 	case tea.KeyMsg:
 		switch m.view {
 		case viewList:
@@ -377,6 +450,13 @@ func (m *IntegrationsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			}
 		case viewDependencyBlocked:
 			return m.updateDependencyBlocked(msg)
+		case viewHubUpdating:
+			// Allow Esc to close (update continues in background)
+			if msg.String() == "esc" {
+				m.view = viewList
+				m.hubUpdating = false
+				return m, nil
+			}
 		}
 	}
 	return m, nil
@@ -388,10 +468,20 @@ func (m *IntegrationsModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 		return nil, nil // Close modal
 	case "tab":
 		m.tabs.Next()
-		// If switching to Dependencies tab and not loaded, fetch
-		if m.tabs.ActiveIndex() == 1 && m.dependencies == nil {
-			m.depLoading = true
-			return m, m.fetchDependencies()
+		// If switching to Dependencies tab, load data as needed
+		if m.tabs.ActiveIndex() == 1 {
+			var cmds []tea.Cmd
+			if m.dependencies == nil {
+				m.depLoading = true
+				cmds = append(cmds, m.fetchDependencies())
+			}
+			if m.hubUpdateInfo == nil && m.isAdmin && !m.hubUpdateLoading {
+				m.hubUpdateLoading = true
+				cmds = append(cmds, m.checkHubUpdates())
+			}
+			if len(cmds) > 0 {
+				return m, tea.Batch(cmds...)
+			}
 		}
 		return m, nil
 	case "shift+tab":
@@ -461,12 +551,44 @@ func (m *IntegrationsModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 			m.error = ""
 			m.testResult = ""
 		} else {
-			// Refresh dependencies
+			// Refresh dependencies and hub updates
 			m.depLoading = true
 			m.depError = ""
-			return m, m.fetchDependencies()
+			m.hubUpdateInfo = nil
+			m.hubUpdateError = ""
+			var cmds []tea.Cmd
+			cmds = append(cmds, m.fetchDependencies())
+			if m.isAdmin {
+				m.hubUpdateLoading = true
+				cmds = append(cmds, m.checkHubUpdates())
+			}
+			return m, tea.Batch(cmds...)
 		}
 		return m, m.loadIntegrations()
+	case "c":
+		// Check for hub updates (Dependencies tab only)
+		if m.tabs.ActiveIndex() == 1 && m.isAdmin && !m.hubUpdateLoading {
+			m.hubUpdateLoading = true
+			m.hubUpdateError = ""
+			return m, m.checkHubUpdates()
+		}
+	case "u":
+		// Apply hub update (Dependencies tab only, with confirmation)
+		if m.tabs.ActiveIndex() == 1 && m.isAdmin && m.hubUpdateInfo != nil && m.hubUpdateInfo.UpdateAvailable {
+			if m.hubUpdateConfirm {
+				// Confirmed, apply update
+				m.hubUpdateConfirm = false
+				m.hubUpdating = true
+				return m, m.applyHubUpdate()
+			} else {
+				// First press, show confirmation
+				m.hubUpdateConfirm = true
+				// Clear confirmation after 3 seconds
+				return m, tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
+					return HubUpdateConfirmExpiredMsg{}
+				})
+			}
+		}
 	}
 	return m, nil
 }
@@ -653,6 +775,8 @@ func (m *IntegrationsModal) View() string {
 		return m.viewCheckingDependencies()
 	case viewDependencyBlocked:
 		return m.viewDependencyBlocked()
+	case viewHubUpdating:
+		return m.viewHubUpdating()
 	default:
 		return m.viewListContent()
 	}
@@ -718,6 +842,29 @@ func (m *IntegrationsModal) viewDependencyBlocked() string {
 		b.WriteString("\n\n")
 		b.WriteString(hintStyle.Render("[Esc] Back"))
 	}
+
+	return b.String()
+}
+
+func (m *IntegrationsModal) viewHubUpdating() string {
+	var b strings.Builder
+
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.TextPrimary)
+	b.WriteString(titleStyle.Render("Hub Update in Progress"))
+	b.WriteString("\n\n")
+
+	textStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+	b.WriteString(textStyle.Render("Hub-core is updating and will restart momentarily."))
+	b.WriteString("\n")
+	b.WriteString(textStyle.Render("You will be disconnected briefly. The TUI will reconnect automatically."))
+	b.WriteString("\n\n")
+
+	loadingStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary).Italic(true)
+	b.WriteString(loadingStyle.Render("Waiting for server to restart..."))
+	b.WriteString("\n\n")
+
+	hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+	b.WriteString(hintStyle.Render("[Esc] Close (update will continue in background)"))
 
 	return b.String()
 }
@@ -914,6 +1061,59 @@ func (m *IntegrationsModal) viewDependenciesList() string {
 		lines = append(lines, loadingStyle.Render(fmt.Sprintf("  Installing %s...", m.depInstalling)))
 	}
 
+	// Hub Version section
+	lines = append(lines, "")
+	separatorStyle := lipgloss.NewStyle().Foreground(theme.Border)
+	lines = append(lines, separatorStyle.Render(strings.Repeat("─", 60)))
+	lines = append(lines, "")
+
+	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.TextPrimary)
+	lines = append(lines, sectionStyle.Render("Hub Version"))
+	lines = append(lines, "")
+
+	if m.hubUpdateLoading {
+		lines = append(lines, lipgloss.NewStyle().Foreground(theme.TextSecondary).Render("  Checking for updates..."))
+	} else if m.hubUpdateError != "" {
+		errorStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary).Italic(true)
+		lines = append(lines, errorStyle.Render("  "+m.hubUpdateError))
+	} else if m.hubUpdateInfo != nil {
+		currentStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+		lines = append(lines, currentStyle.Render(fmt.Sprintf("  Current: %s", m.hubUpdateInfo.CurrentVersion)))
+
+		if m.hubUpdateInfo.UpdateAvailable {
+			updateStyle := lipgloss.NewStyle().Foreground(theme.Success)
+			lines = append(lines, updateStyle.Render(fmt.Sprintf("  Latest:  %s (update available)", m.hubUpdateInfo.LatestVersion)))
+			lines = append(lines, "")
+
+			if m.hubUpdateInfo.ReleaseURL != "" {
+				linkStyle := lipgloss.NewStyle().Foreground(theme.Link)
+				lines = append(lines, "  Release: "+linkStyle.Render(m.hubUpdateInfo.ReleaseURL))
+			}
+
+			if m.isAdmin {
+				lines = append(lines, "")
+				if m.hubUpdating {
+					loadingStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary).Italic(true)
+					lines = append(lines, loadingStyle.Render("  Applying update..."))
+				} else if m.hubUpdateConfirm {
+					warningStyle := lipgloss.NewStyle().Foreground(theme.Warning)
+					lines = append(lines, warningStyle.Render("  ⚠️  Server will restart. Press [u] again to confirm."))
+				}
+			}
+		} else {
+			upToDateStyle := lipgloss.NewStyle().Foreground(theme.Success)
+			lines = append(lines, upToDateStyle.Render("  ✓ Up to date"))
+		}
+	} else {
+		// Not loaded yet
+		hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+		if m.isAdmin {
+			lines = append(lines, hintStyle.Render("  Press [c] to check for updates"))
+		} else {
+			lines = append(lines, hintStyle.Render("  Version check available to administrators only"))
+		}
+	}
+
 	// Hints
 	lines = append(lines, "")
 	hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
@@ -927,11 +1127,20 @@ func (m *IntegrationsModal) viewDependenciesList() string {
 		}
 	}
 
+	// Build hints based on state
+	var hints []string
 	if m.isAdmin && hasActionable {
-		lines = append(lines, hintStyle.Render("  [Enter] Install/Update  [r] Refresh"))
-	} else {
-		lines = append(lines, hintStyle.Render("  [r] Refresh"))
+		hints = append(hints, "[Enter] Install/Update")
 	}
+	if m.isAdmin && m.hubUpdateInfo != nil && m.hubUpdateInfo.UpdateAvailable && !m.hubUpdating {
+		hints = append(hints, "[u] Update Hub")
+	}
+	if m.isAdmin && m.hubUpdateInfo == nil && !m.hubUpdateLoading {
+		hints = append(hints, "[c] Check Updates")
+	}
+	hints = append(hints, "[r] Refresh")
+
+	lines = append(lines, hintStyle.Render("  "+strings.Join(hints, "  ")))
 
 	return strings.Join(lines, "\n")
 }

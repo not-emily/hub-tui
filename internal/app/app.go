@@ -335,6 +335,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case modal.HubUpdatesLoadedMsg:
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.HubUpdateAppliedMsg:
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.HubUpdateConfirmExpiredMsg:
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
 	case modal.LLMAvailableProvidersMsg:
 		if msg.Err != nil && client.IsAuthError(msg.Err) {
 			return m.handleAuthExpired()

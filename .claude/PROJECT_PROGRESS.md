@@ -2,7 +2,7 @@
 
 ## Plan Files
 Roadmap: [v6-dependency-management plan](../docs/plan/plan.md)
-Current Phase: [phase-4.md](../docs/plan/phases/phase-4.md)
+Current Phase: [phase-6.md](../docs/plan/phases/phase-6.md)
 Latest Weekly Report: [weekly-2026-W03.md](../docs/reports/weekly-2026-W03.md)
 Archived: [v1-initial-build](../docs/plan/_archived/v1-initial-build/), [v2-llm-profiles](../docs/plan/_archived/v2-llm-profiles/), [v3-param-collection](../docs/plan/_archived/v3-param-collection/), [v4-config-types](../docs/plan/_archived/v4-config-types/), [v5-dynamic-provider-fields](../docs/plan/_archived/v5-dynamic-provider-fields/)
 
@@ -12,19 +12,7 @@ Last Updated: 2026-01-23
 Admin UI for CLI dependency management - installing/updating CLI tools (like sage) and hub-core self-updates
 
 ## Active Tasks
-- [IN PROGRESS] Phase 4 - Dependencies Tab UI
-  - ✓ Added tabs to IntegrationsModal
-  - ✓ Added Dependencies tab view with table rendering
-  - ✓ Added async dependency loading
-  - ✓ Added message routing from app to modal
-  - ✓ Removed debug println statements (were corrupting terminal display)
-  - ✓ Fixed admin status not fetched on startup (added doGetUserInfo() to Init())
-  - ✓ Fixed Dependency struct to match actual API (RequiredVersion, NeedsUpdate, InstalledVersion)
-  - ✓ Updated table columns: Tool, Status, Installed, Required, Actions
-  - ✓ Install now passes RequiredVersion instead of "latest"
-  - ✓ Dynamic hint - hides [Enter] when no actions available
-  - ✓ Tested: install/update sage works end-to-end
-  - ⏭ Non-admin view testing (needs non-admin user)
+- [NEXT] Phase 6 - Hub Self-Update UI
 
 ## Open Questions/Blockers
 None
@@ -53,6 +41,25 @@ None
   - GetHubUpdates() checks for hub-core updates (handles private repo)
   - ApplyHubUpdate() triggers hub-core self-update and restart
   - All methods follow existing client patterns with parseError()
+- Phase 4 - Dependencies Tab UI
+  - Added tabs to IntegrationsModal
+  - Added Dependencies tab view with table rendering
+  - Added async dependency loading and message routing
+  - Fixed admin status not fetched on startup (added doGetUserInfo() to Init())
+  - Fixed Dependency struct to match actual API (RequiredVersion, NeedsUpdate, InstalledVersion)
+  - Table columns: Tool, Status, Installed, Required, Actions
+  - Install passes RequiredVersion instead of "latest"
+  - Dynamic hint - hides [Enter] when no actions available
+  - Tested: install/update sage works end-to-end
+  - Note: Non-admin view testing deferred (needs non-admin user)
+- Phase 5 - Integration Config Dependency Check
+  - Check dependencies before allowing integration configuration
+  - Block config flow if deps unsatisfied, show "Dependencies Required" view
+  - Admin can install via [Enter], auto-proceeds to config after success
+  - Non-admin sees "Contact your administrator" message
+  - Added GetDependencies() integration filter support (?integration=llm)
+  - Added DependencyCheckMsg routing from app to modal
+  - Tested: outdated sage blocks AI config, install proceeds to config
 
 ## Future Enhancements (not in current plan)
 - oauth config type (requires browser redirect flow)
@@ -64,6 +71,4 @@ None
 - Workflow output format hints (server sends output_format: markdown/json for rendering)
 
 ## Next Session
-- Test non-admin view when user available
-- Phase 5: Integration Config Check (block config until deps satisfied)
 - Phase 6: Hub Self-Update UI
