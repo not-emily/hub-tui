@@ -1,18 +1,18 @@
 # Project Progress - hub-tui
 
 ## Plan Files
-Roadmap: [v6-dependency-management plan](../docs/plan/plan.md)
-Current Phase: [phase-6.md](../docs/plan/phases/phase-6.md)
+Roadmap: None
+Current Phase: None
 Latest Weekly Report: [weekly-2026-W03.md](../docs/reports/weekly-2026-W03.md)
-Archived: [v1-initial-build](../docs/plan/_archived/v1-initial-build/), [v2-llm-profiles](../docs/plan/_archived/v2-llm-profiles/), [v3-param-collection](../docs/plan/_archived/v3-param-collection/), [v4-config-types](../docs/plan/_archived/v4-config-types/), [v5-dynamic-provider-fields](../docs/plan/_archived/v5-dynamic-provider-fields/)
+Archived: [v1-initial-build](../docs/plan/_archived/v1-initial-build/), [v2-llm-profiles](../docs/plan/_archived/v2-llm-profiles/), [v3-param-collection](../docs/plan/_archived/v3-param-collection/), [v4-config-types](../docs/plan/_archived/v4-config-types/), [v5-dynamic-provider-fields](../docs/plan/_archived/v5-dynamic-provider-fields/), [v6-dependency-management](../docs/plan/_archived/v6-dependency-management/)
 
 Last Updated: 2026-01-23
 
 ## Current Focus
-Admin UI for CLI dependency management - installing/updating CLI tools (like sage) and hub-core self-updates
+No active plan - ready for new work
 
 ## Active Tasks
-- [NEXT] Phase 6 - Hub Self-Update UI
+None
 
 ## Open Questions/Blockers
 None
@@ -60,6 +60,14 @@ None
   - Added GetDependencies() integration filter support (?integration=llm)
   - Added DependencyCheckMsg routing from app to modal
   - Tested: outdated sage blocks AI config, install proceeds to config
+- Phase 6 - Hub Self-Update UI
+  - Added Hub Version section to Dependencies tab
+  - Shows current version and update availability
+  - [c] to check for updates, [u] to apply update
+  - Confirmation prompt before applying update
+  - Auto-loads hub updates when switching to Dependencies tab
+  - Handles private repo gracefully (404 = updates not available)
+  - Note: Full testing deferred until hub-core repo is public
 
 ## Future Enhancements (not in current plan)
 - oauth config type (requires browser redirect flow)
@@ -71,4 +79,4 @@ None
 - Workflow output format hints (server sends output_format: markdown/json for rendering)
 
 ## Next Session
-- Phase 6: Hub Self-Update UI
+Ready for new work - no active plan
