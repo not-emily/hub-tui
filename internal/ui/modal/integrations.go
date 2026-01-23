@@ -19,6 +19,8 @@ const (
 	viewList integrationsView = iota
 	viewProfiles
 	viewConfigure
+	viewCheckingDependencies
+	viewDependencyBlocked
 )
 
 // LLM config type views (offset to avoid collision, defined in integrations_llm.go)
@@ -35,6 +37,21 @@ type IntegrationsModal struct {
 	selected     int
 	loading      bool
 	error        string
+	isAdmin      bool // Whether the current user has admin permissions
+
+	// Tab state
+	tabs *components.Tabs
+
+	// Dependencies state
+	dependencies     []client.Dependency
+	depLoading       bool
+	depError         string
+	depInstalling    string // Name of dependency being installed (empty if none)
+	selectedDepIndex int    // Selected dependency in list
+
+	// Dependency check state (for blocking config until deps satisfied)
+	pendingIntegration client.Integration // Integration waiting for dependency check
+	unsatisfiedDeps    []client.Dependency // Dependencies that need to be installed
 
 	// Current view
 	view integrationsView
@@ -91,11 +108,13 @@ type IntegrationsModal struct {
 }
 
 // NewIntegrationsModal creates a new integrations modal.
-func NewIntegrationsModal(c *client.Client) *IntegrationsModal {
+func NewIntegrationsModal(c *client.Client, isAdmin bool) *IntegrationsModal {
 	return &IntegrationsModal{
 		client:  c,
+		isAdmin: isAdmin,
 		loading: true,
 		view:    viewList,
+		tabs:    components.NewTabs([]string{"Integrations", "Dependencies"}),
 	}
 }
 
@@ -115,6 +134,26 @@ type IntegrationConfiguredMsg struct {
 type IntegrationTestedMsg struct {
 	Name  string
 	Error error
+}
+
+// DependenciesLoadedMsg is sent when dependencies are loaded.
+type DependenciesLoadedMsg struct {
+	Dependencies []client.Dependency
+	Err          error
+}
+
+// DependencyInstalledMsg is sent when a dependency is installed.
+type DependencyInstalledMsg struct {
+	Name   string
+	Status *client.Dependency
+	Err    error
+}
+
+// DependencyCheckMsg is sent after checking dependencies for an integration.
+type DependencyCheckMsg struct {
+	Integration  string
+	Dependencies []client.Dependency
+	Err          error
 }
 
 // Init initializes the modal and triggers data fetch.
@@ -144,6 +183,23 @@ func (m *IntegrationsModal) testIntegration() tea.Cmd {
 	return func() tea.Msg {
 		err := m.client.TestIntegration(name)
 		return IntegrationTestedMsg{Name: name, Error: err}
+	}
+}
+
+func (m *IntegrationsModal) fetchDependencies() tea.Cmd {
+	return func() tea.Msg {
+		deps, err := m.client.GetDependencies("") // Empty = all dependencies
+		return DependenciesLoadedMsg{Dependencies: deps, Err: err}
+	}
+}
+
+func (m *IntegrationsModal) installDependency(name, version string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := m.client.InstallDependency(name, version)
+		if err != nil {
+			return DependencyInstalledMsg{Name: name, Err: err}
+		}
+		return DependencyInstalledMsg{Name: name, Status: &result.Status, Err: nil}
 	}
 }
 
@@ -225,6 +281,84 @@ func (m *IntegrationsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		m.llmConfirm.HandleExpired(msg)
 		return m, nil
 
+	case DependenciesLoadedMsg:
+		m.depLoading = false
+		if msg.Err != nil {
+			m.depError = msg.Err.Error()
+		} else {
+			m.dependencies = msg.Dependencies
+			m.depError = ""
+		}
+		return m, nil
+
+	case DependencyCheckMsg:
+		if msg.Err != nil {
+			// Error checking dependencies - show error but allow proceeding
+			// (better to let them try than block completely)
+			m.depError = msg.Err.Error()
+			return m.proceedToLLMConfig()
+		}
+
+		// Check if any dependencies are unsatisfied
+		var unsatisfied []client.Dependency
+		for _, dep := range msg.Dependencies {
+			if !dep.Installed || dep.NeedsUpdate {
+				unsatisfied = append(unsatisfied, dep)
+			}
+		}
+
+		if len(unsatisfied) == 0 {
+			// All satisfied, proceed to config
+			return m.proceedToLLMConfig()
+		}
+
+		// Block config until dependencies are installed
+		m.unsatisfiedDeps = unsatisfied
+		m.view = viewDependencyBlocked
+		return m, nil
+
+	case DependencyInstalledMsg:
+		m.depInstalling = ""
+		if msg.Err != nil {
+			m.depError = fmt.Sprintf("Failed to install %s: %s", msg.Name, msg.Err.Error())
+			return m, nil
+		}
+
+		// Update dependency in main list (Dependencies tab)
+		for i, dep := range m.dependencies {
+			if dep.Name == msg.Name {
+				m.dependencies[i] = *msg.Status
+				break
+			}
+		}
+
+		// If we're in blocked view, also update unsatisfied deps list
+		if m.view == viewDependencyBlocked {
+			for i, dep := range m.unsatisfiedDeps {
+				if dep.Name == msg.Name {
+					m.unsatisfiedDeps[i] = *msg.Status
+					break
+				}
+			}
+
+			// Check if all deps are now satisfied
+			allSatisfied := true
+			for _, dep := range m.unsatisfiedDeps {
+				if !dep.Installed || dep.NeedsUpdate {
+					allSatisfied = false
+					break
+				}
+			}
+
+			if allSatisfied {
+				// All satisfied! Proceed to config
+				return m.proceedToLLMConfig()
+			}
+		}
+
+		m.depError = ""
+		return m, nil
+
 	case tea.KeyMsg:
 		switch m.view {
 		case viewList:
@@ -235,6 +369,14 @@ func (m *IntegrationsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			return m.updateConfigure(msg)
 		case viewConfigLLM, viewLLMProviderForm, viewLLMProfileForm:
 			return m.updateLLM(msg)
+		case viewCheckingDependencies:
+			// Allow Esc to cancel while checking
+			if msg.String() == "esc" {
+				m.view = viewList
+				return m, nil
+			}
+		case viewDependencyBlocked:
+			return m.updateDependencyBlocked(msg)
 		}
 	}
 	return m, nil
@@ -244,40 +386,107 @@ func (m *IntegrationsModal) updateList(msg tea.KeyMsg) (Modal, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		return nil, nil // Close modal
+	case "tab":
+		m.tabs.Next()
+		// If switching to Dependencies tab and not loaded, fetch
+		if m.tabs.ActiveIndex() == 1 && m.dependencies == nil {
+			m.depLoading = true
+			return m, m.fetchDependencies()
+		}
+		return m, nil
+	case "shift+tab":
+		m.tabs.Previous()
+		return m, nil
 	case "up", "k":
-		if m.selected > 0 {
-			m.selected--
-			m.testResult = ""
+		if m.tabs.ActiveIndex() == 0 {
+			// Integrations tab
+			if m.selected > 0 {
+				m.selected--
+				m.testResult = ""
+			}
+		} else {
+			// Dependencies tab
+			if m.selectedDepIndex > 0 {
+				m.selectedDepIndex--
+			}
 		}
 	case "down", "j":
-		if m.selected < len(m.integrations)-1 {
-			m.selected++
-			m.testResult = ""
+		if m.tabs.ActiveIndex() == 0 {
+			// Integrations tab
+			if m.selected < len(m.integrations)-1 {
+				m.selected++
+				m.testResult = ""
+			}
+		} else {
+			// Dependencies tab
+			if m.selectedDepIndex < len(m.dependencies)-1 {
+				m.selectedDepIndex++
+			}
 		}
 	case "enter":
-		if !m.loading && len(m.integrations) > 0 {
-			integration := m.integrations[m.selected]
-			switch integration.ConfigType {
-			case "llm":
-				return m.enterLLMConfig(integration)
-			case "api_key", "":
-				// api_key is the default for backwards compatibility
-				m.enterProfilesView()
-			default:
-				m.error = fmt.Sprintf("Unknown config type: %s", integration.ConfigType)
+		if m.tabs.ActiveIndex() == 0 {
+			// Integrations tab
+			if !m.loading && len(m.integrations) > 0 {
+				integration := m.integrations[m.selected]
+				switch integration.ConfigType {
+				case "llm":
+					return m.enterLLMConfig(integration)
+				case "api_key", "":
+					// api_key is the default for backwards compatibility
+					m.enterProfilesView()
+				default:
+					m.error = fmt.Sprintf("Unknown config type: %s", integration.ConfigType)
+				}
+			}
+		} else {
+			// Dependencies tab - install/update
+			if m.isAdmin && len(m.dependencies) > 0 && m.depInstalling == "" {
+				dep := m.dependencies[m.selectedDepIndex]
+				if !dep.Installed || dep.NeedsUpdate {
+					m.depInstalling = dep.Name
+					return m, m.installDependency(dep.Name, dep.RequiredVersion)
+				}
 			}
 		}
 	case "t":
-		if !m.loading && !m.testing && len(m.integrations) > 0 {
+		if m.tabs.ActiveIndex() == 0 && !m.loading && !m.testing && len(m.integrations) > 0 {
 			m.testing = true
 			m.testResult = ""
 			return m, m.testIntegration()
 		}
 	case "r":
-		m.loading = true
-		m.error = ""
-		m.testResult = ""
+		if m.tabs.ActiveIndex() == 0 {
+			// Refresh integrations
+			m.loading = true
+			m.error = ""
+			m.testResult = ""
+		} else {
+			// Refresh dependencies
+			m.depLoading = true
+			m.depError = ""
+			return m, m.fetchDependencies()
+		}
 		return m, m.loadIntegrations()
+	}
+	return m, nil
+}
+
+func (m *IntegrationsModal) updateDependencyBlocked(msg tea.KeyMsg) (Modal, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.view = viewList
+		m.unsatisfiedDeps = nil
+		return m, nil
+	case "enter":
+		if m.isAdmin && m.depInstalling == "" {
+			// Install first unsatisfied dependency
+			for _, dep := range m.unsatisfiedDeps {
+				if !dep.Installed || dep.NeedsUpdate {
+					m.depInstalling = dep.Name
+					return m, m.installDependency(dep.Name, dep.RequiredVersion)
+				}
+			}
+		}
 	}
 	return m, nil
 }
@@ -440,12 +649,102 @@ func (m *IntegrationsModal) View() string {
 		return m.viewConfigureContent()
 	case viewConfigLLM, viewLLMProviderForm, viewLLMProfileForm:
 		return m.viewLLM()
+	case viewCheckingDependencies:
+		return m.viewCheckingDependencies()
+	case viewDependencyBlocked:
+		return m.viewDependencyBlocked()
 	default:
 		return m.viewListContent()
 	}
 }
 
+func (m *IntegrationsModal) viewCheckingDependencies() string {
+	return lipgloss.NewStyle().
+		Foreground(theme.TextSecondary).
+		Render("Checking dependencies...")
+}
+
+func (m *IntegrationsModal) viewDependencyBlocked() string {
+	var b strings.Builder
+
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.Warning)
+	b.WriteString(titleStyle.Render("Dependencies Required"))
+	b.WriteString("\n\n")
+
+	textStyle := lipgloss.NewStyle().Foreground(theme.TextPrimary)
+	b.WriteString(textStyle.Render(
+		"The following dependencies must be installed before configuring this integration:"))
+	b.WriteString("\n\n")
+
+	// List unsatisfied dependencies
+	for _, dep := range m.unsatisfiedDeps {
+		var status string
+		if !dep.Installed {
+			status = "Not installed"
+		} else if dep.NeedsUpdate {
+			status = fmt.Sprintf("Outdated (installed: %s, required: %s)",
+				dep.InstalledVersion, dep.RequiredVersion)
+		}
+
+		depStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+		b.WriteString(depStyle.Render(fmt.Sprintf("  • %s: %s", dep.Name, status)))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+
+	// Show error if any
+	if m.depError != "" {
+		errorStyle := lipgloss.NewStyle().Foreground(theme.Error)
+		b.WriteString(errorStyle.Render("Error: " + m.depError))
+		b.WriteString("\n\n")
+	}
+
+	// Show installing status if in progress
+	if m.depInstalling != "" {
+		loadingStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary).Italic(true)
+		b.WriteString(loadingStyle.Render(fmt.Sprintf("Installing %s...", m.depInstalling)))
+		b.WriteString("\n\n")
+	}
+
+	// Show appropriate hints based on admin status
+	hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+	if m.isAdmin {
+		b.WriteString(hintStyle.Render("[Enter] Install dependencies  [Esc] Cancel"))
+	} else {
+		messageStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary).Italic(true)
+		b.WriteString(messageStyle.Render(
+			"Please contact your administrator to install these dependencies."))
+		b.WriteString("\n\n")
+		b.WriteString(hintStyle.Render("[Esc] Back"))
+	}
+
+	return b.String()
+}
+
 func (m *IntegrationsModal) viewListContent() string {
+	var b strings.Builder
+
+	// Render tabs at top
+	b.WriteString(m.tabs.View())
+	b.WriteString("\n")
+
+	// Add separator line
+	separatorStyle := lipgloss.NewStyle().Foreground(theme.Border)
+	b.WriteString(separatorStyle.Render(strings.Repeat("─", 120)))
+	b.WriteString("\n\n")
+
+	// Render content based on active tab
+	if m.tabs.ActiveIndex() == 0 {
+		b.WriteString(m.viewIntegrationsList())
+	} else {
+		b.WriteString(m.viewDependenciesList())
+	}
+
+	return b.String()
+}
+
+func (m *IntegrationsModal) viewIntegrationsList() string {
 	if m.loading {
 		return lipgloss.NewStyle().
 			Foreground(theme.TextSecondary).
@@ -547,6 +846,121 @@ func (m *IntegrationsModal) viewListContent() string {
 	lines = append(lines, legendStyle.Render("  [Enter] Configure  [t] Test  [r] Refresh"))
 
 	return strings.Join(lines, "\n")
+}
+
+func (m *IntegrationsModal) viewDependenciesList() string {
+	if m.depLoading {
+		return lipgloss.NewStyle().
+			Foreground(theme.TextSecondary).
+			Render("Loading dependencies...")
+	}
+
+	if m.depError != "" {
+		errorStyle := lipgloss.NewStyle().Foreground(theme.Error)
+		hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			errorStyle.Render("Error: "+m.depError),
+			"",
+			hintStyle.Render("[r] Retry"),
+		)
+	}
+
+	if len(m.dependencies) == 0 {
+		return lipgloss.NewStyle().
+			Foreground(theme.TextSecondary).
+			Render("No dependencies configured.")
+	}
+
+	var lines []string
+
+	// Table header
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.TextSecondary)
+	lines = append(lines, headerStyle.Render(
+		fmt.Sprintf("  %-12s %-18s %-12s %-12s %s",
+			"Tool", "Status", "Installed", "Required", "Actions")))
+
+	selectedStyle := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
+	normalStyle := lipgloss.NewStyle().Foreground(theme.TextPrimary)
+
+	// Table rows
+	for i, dep := range m.dependencies {
+		status := m.dependencyStatusString(dep)
+		actions := m.dependencyActionsString(dep)
+
+		installedVer := dep.InstalledVersion
+		if installedVer == "" {
+			installedVer = "-"
+		}
+
+		row := fmt.Sprintf("  %-12s %-18s %-12s %-12s %s",
+			dep.Name,
+			status,
+			installedVer,
+			dep.RequiredVersion,
+			actions)
+
+		if i == m.selectedDepIndex {
+			lines = append(lines, selectedStyle.Render(row))
+		} else {
+			lines = append(lines, normalStyle.Render(row))
+		}
+	}
+
+	// Show installing status if in progress
+	if m.depInstalling != "" {
+		lines = append(lines, "")
+		loadingStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary).Italic(true)
+		lines = append(lines, loadingStyle.Render(fmt.Sprintf("  Installing %s...", m.depInstalling)))
+	}
+
+	// Hints
+	lines = append(lines, "")
+	hintStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+
+	// Check if any dependency needs action
+	hasActionable := false
+	for _, dep := range m.dependencies {
+		if !dep.Installed || dep.NeedsUpdate {
+			hasActionable = true
+			break
+		}
+	}
+
+	if m.isAdmin && hasActionable {
+		lines = append(lines, hintStyle.Render("  [Enter] Install/Update  [r] Refresh"))
+	} else {
+		lines = append(lines, hintStyle.Render("  [r] Refresh"))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (m *IntegrationsModal) dependencyStatusString(dep client.Dependency) string {
+	if !dep.Installed {
+		return "✗ Not installed"
+	}
+	if dep.NeedsUpdate {
+		return "⚠️ Outdated"
+	}
+	return "✓ Up to date"
+}
+
+func (m *IntegrationsModal) dependencyActionsString(dep client.Dependency) string {
+	if !m.isAdmin {
+		if !dep.Installed {
+			return "Contact admin"
+		}
+		return ""
+	}
+
+	if !dep.Installed {
+		return "[Enter] Install"
+	}
+	if dep.NeedsUpdate {
+		return "[Enter] Update"
+	}
+	return ""
 }
 
 func (m *IntegrationsModal) viewProfilesContent() string {

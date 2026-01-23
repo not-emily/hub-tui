@@ -25,6 +25,12 @@ type LoginResultMsg struct {
 	Error     string
 }
 
+// UserInfoLoadedMsg is sent when user info is loaded from /me.
+type UserInfoLoadedMsg struct {
+	UserInfo *client.UserInfo
+	Err      error
+}
+
 // HealthCheckMsg is sent when a health check completes.
 type HealthCheckMsg struct {
 	Success bool

@@ -61,6 +61,7 @@ type Model struct {
 	quitting     bool
 	ctrlCPressed bool
 	cancelAsk    context.CancelFunc // Cancel function for streaming request
+	isAdmin      bool               // Whether the current user has admin permissions
 
 	// Workflow cancel hint tracking (single active hint)
 	workflowHintRunID  string // Run ID of workflow with active hint
@@ -107,8 +108,8 @@ func (m *Model) SetProgram(p *tea.Program) {
 // Init initializes the model.
 func (m Model) Init() tea.Cmd {
 	if m.state == StateMain {
-		// Verify connection with health check
-		return m.doHealthCheck()
+		// Verify connection and fetch user info (for admin status)
+		return tea.Batch(m.doGetUserInfo(), m.doHealthCheck())
 	}
 	return nil
 }
@@ -182,6 +183,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case LoginResultMsg:
 		return m.handleLoginResult(msg)
+
+	case UserInfoLoadedMsg:
+		return m.handleUserInfoLoaded(msg)
 
 	case HealthCheckMsg:
 		return m.handleHealthCheck(msg)
@@ -308,6 +312,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Error != nil && client.IsAuthError(msg.Error) {
 			return m.handleAuthExpired()
 		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.DependenciesLoadedMsg:
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.DependencyInstalledMsg:
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.DependencyCheckMsg:
 		if m.modal.IsOpen() {
 			_, cmd := m.modal.UpdateMsg(msg)
 			return m, cmd
@@ -727,7 +749,7 @@ func (m Model) handleCommand(cmd *chat.Command) (tea.Model, tea.Cmd) {
 		return m, m.modal.Open(modal.NewWorkflowsModal(m.client))
 
 	case "integrations":
-		return m, m.modal.Open(modal.NewIntegrationsModal(m.client))
+		return m, m.modal.Open(modal.NewIntegrationsModal(m.client, m.isAdmin))
 
 	case "tasks":
 		return m, m.modal.Open(modal.NewTasksModal(m.client))
@@ -767,7 +789,18 @@ func (m Model) handleLoginResult(msg LoginResultMsg) (tea.Model, tea.Cmd) {
 	m.chat.SetSize(m.width, m.height-1)
 	m.chat.FocusInput()
 
-	return m, m.doHealthCheck()
+	// Fetch user info and run health check
+	return m, tea.Batch(m.doGetUserInfo(), m.doHealthCheck())
+}
+
+func (m Model) handleUserInfoLoaded(msg UserInfoLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.Err != nil {
+		// Log error but don't block - assume non-admin as safe default
+		m.isAdmin = false
+		return m, nil
+	}
+	m.isAdmin = msg.UserInfo.IsAdmin
+	return m, nil
 }
 
 func (m Model) handleHealthCheck(msg HealthCheckMsg) (tea.Model, tea.Cmd) {
@@ -858,6 +891,13 @@ func (m Model) doHealthCheck() tea.Cmd {
 			return HealthCheckMsg{Success: false, Error: err.Error()}
 		}
 		return HealthCheckMsg{Success: true}
+	}
+}
+
+func (m Model) doGetUserInfo() tea.Cmd {
+	return func() tea.Msg {
+		userInfo, err := m.client.GetMe()
+		return UserInfoLoadedMsg{UserInfo: userInfo, Err: err}
 	}
 }
 

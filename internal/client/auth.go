@@ -101,3 +101,35 @@ func IsTokenExpired(token string) bool {
 	// Add a small buffer (30 seconds) to avoid edge cases
 	return time.Now().After(expiry.Add(-30 * time.Second))
 }
+
+// UserInfo represents the current user's information and status.
+type UserInfo struct {
+	Username       string   `json:"username"`
+	HomeDir        string   `json:"home_dir"`
+	HubDir         string   `json:"hub_dir"`
+	IsAdmin        bool     `json:"is_admin"`
+	Groups         []string `json:"groups"`
+	EnabledModules int      `json:"enabled_modules"`
+	Workflows      int      `json:"workflows"`
+	Assistants     int      `json:"assistants"`
+}
+
+// GetMe fetches the current user's information from the /me endpoint.
+func (c *Client) GetMe() (*UserInfo, error) {
+	resp, err := c.get("/me")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, parseError(resp)
+	}
+
+	var userInfo UserInfo
+	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+		return nil, fmt.Errorf("invalid response: %w", err)
+	}
+
+	return &userInfo, nil
+}

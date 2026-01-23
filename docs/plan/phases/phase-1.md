@@ -1,95 +1,141 @@
-# Phase 1: Client Layer
+# Phase 1: User Info & Admin Status
 
 > **Depends on:** None
-> **Enables:** Phase 2 (Dynamic Provider Form)
+> **Enables:** Phase 4 (Dependencies tab needs admin status to show/hide actions)
 >
 > See: [Full Plan](../plan.md)
 
 ## Goal
 
-Add types and API method to support the new provider fields endpoint and request format.
+Add user info API to check admin status and cache it in the app model for use throughout the TUI.
 
 ## Key Deliverables
 
-- `ProviderFieldInfo` struct for field metadata
-- `GetLLMProviderFields()` method to fetch field requirements
-- Updated `AddProviderRequest` with `Fields map[string]string`
+- `UserInfo` type with `is_admin` field
+- `GetMe()` client method to fetch user info from `/me` endpoint
+- `isAdmin` field cached in root `app.Model`
+- Call `GetMe()` after successful login
+- `UserInfoLoadedMsg` handled in app update loop
+
+## Files to Create
+
+- None (only modifications)
 
 ## Files to Modify
 
-- `internal/client/integrations_llm.go` — Add type, method, update request struct
+- `internal/client/auth.go` — Add `UserInfo` type and `GetMe()` method
+- `internal/app/app.go` — Add `isAdmin` field, call `GetMe()` on login, handle `UserInfoLoadedMsg`
+
+## Dependencies
+
+**Internal:** None
+
+**External:** None (uses existing net/http client)
 
 ## Implementation Notes
 
-### ProviderFieldInfo Type
+### UserInfo Type
 
-```go
-// ProviderFieldInfo describes a configuration field required by a provider.
-type ProviderFieldInfo struct {
-    Key      string `json:"key"`      // Field identifier (e.g., "api_key", "base_url")
-    Label    string `json:"label"`    // Human-readable label for UI
-    Required bool   `json:"required"` // Whether field must be provided
-    Secret   bool   `json:"secret"`   // Whether to mask input (passwords, API keys)
-    Default  string `json:"default"`  // Default value if not provided
+The `/me` endpoint returns:
+```json
+{
+  "username": "emily",
+  "home_dir": "/home/emily",
+  "hub_dir": "/home/emily/.hub",
+  "is_admin": true,
+  "groups": ["hubadmin"],
+  "enabled_modules": 5,
+  "workflows": 3,
+  "assistants": 2
 }
 ```
 
-### GetLLMProviderFields Method
+Map this to a Go struct. We care most about `is_admin` but should capture all fields for future use.
 
+### GetMe() Implementation
+
+Follow existing client patterns:
 ```go
-// providerFieldsResponse is the API response for provider fields.
-type providerFieldsResponse struct {
-    Fields []ProviderFieldInfo `json:"fields"`
-}
-
-// GetLLMProviderFields fetches field requirements for a provider.
-func (c *Client) GetLLMProviderFields(integration, provider string) ([]ProviderFieldInfo, error) {
-    resp, err := c.get("/integrations/" + integration + "/providers/" + provider + "/fields")
+func (c *Client) GetMe() (*UserInfo, error) {
+    resp, err := c.get("/me")
     if err != nil {
-        return nil, fmt.Errorf("cannot connect to server: %w", err)
+        return nil, err
     }
     defer resp.Body.Close()
 
-    if resp.StatusCode != 200 {
+    if resp.StatusCode != http.StatusOK {
         return nil, parseError(resp)
     }
 
-    var result providerFieldsResponse
-    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-        return nil, fmt.Errorf("invalid response from server: %w", err)
+    var userInfo UserInfo
+    if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+        return nil, fmt.Errorf("invalid response: %w", err)
     }
 
-    return result.Fields, nil
+    return &userInfo, nil
 }
 ```
 
-### Updated AddProviderRequest
+### App Model Changes
 
-Change from:
+Add field:
 ```go
-type AddProviderRequest struct {
-    Provider string `json:"provider"`
-    Account  string `json:"account"`
-    APIKey   string `json:"api_key"`
+type Model struct {
+    // ... existing fields ...
+    isAdmin bool
 }
 ```
 
-To:
+After successful login (when `LoginSuccessMsg` is received), dispatch a command to call `GetMe()`:
 ```go
-type AddProviderRequest struct {
-    Provider string            `json:"provider"`
-    Account  string            `json:"account"`
-    Fields   map[string]string `json:"fields"`
+case LoginSuccessMsg:
+    // ... existing login success handling ...
+    return m, func() tea.Msg {
+        userInfo, err := m.client.GetMe()
+        return UserInfoLoadedMsg{UserInfo: userInfo, Err: err}
+    }
+```
+
+Handle the response:
+```go
+case UserInfoLoadedMsg:
+    if msg.Err != nil {
+        // Log error but don't block - assume non-admin
+        m.isAdmin = false
+        return m, nil
+    }
+    m.isAdmin = msg.UserInfo.IsAdmin
+    return m, nil
+```
+
+### Message Type
+
+Add to `app/app.go`:
+```go
+type UserInfoLoadedMsg struct {
+    UserInfo *client.UserInfo
+    Err      error
 }
 ```
 
-### Update saveProvider in modal
+### Error Handling
 
-The `saveProvider()` function in `integrations_llm.go` will need to be updated in Phase 2 to build the `Fields` map from form values instead of using `APIKey`.
+If `GetMe()` fails:
+- Don't block login
+- Assume user is not admin (safe default)
+- Log the error for debugging
+
+This ensures the TUI remains functional even if the `/me` endpoint has issues.
 
 ## Validation
 
-- [ ] `ProviderFieldInfo` struct added with correct JSON tags
-- [ ] `GetLLMProviderFields()` method added and compiles
-- [ ] `AddProviderRequest` uses `Fields map[string]string` instead of `APIKey`
-- [ ] Code compiles (modal will have build errors until Phase 2)
+How do we know this phase is complete?
+
+- [ ] `UserInfo` type defined in `client/auth.go`
+- [ ] `GetMe()` method implemented and compiles
+- [ ] `app.Model` has `isAdmin` field
+- [ ] `UserInfoLoadedMsg` handled in app update loop
+- [ ] After login, `GetMe()` is called automatically
+- [ ] `isAdmin` is set correctly based on API response
+- [ ] Error case (GetMe fails) handled gracefully - defaults to non-admin
+- [ ] Manual test: Login as admin user, verify `/me` is called (check network logs or add debug print)

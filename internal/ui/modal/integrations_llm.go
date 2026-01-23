@@ -96,13 +96,34 @@ type LLMProfileDefaultSetMsg struct {
 }
 
 // enterLLMConfig enters the LLM configuration view for the given integration.
+// First checks if dependencies are satisfied before allowing config.
 func (m *IntegrationsModal) enterLLMConfig(integration client.Integration) (Modal, tea.Cmd) {
+	m.pendingIntegration = integration
+	m.view = viewCheckingDependencies
+	m.depError = ""
+	return m, m.checkIntegrationDependencies(integration.Name)
+}
+
+// proceedToLLMConfig proceeds to the LLM config view after dependencies are satisfied.
+func (m *IntegrationsModal) proceedToLLMConfig() (Modal, tea.Cmd) {
 	m.view = viewConfigLLM
-	m.llmIntegration = integration
+	m.llmIntegration = m.pendingIntegration
 	m.llmLoading = true
 	m.llmError = ""
 	m.llmSelected = 0
 	return m, m.loadLLMData()
+}
+
+// checkIntegrationDependencies checks if an integration's dependencies are satisfied.
+func (m *IntegrationsModal) checkIntegrationDependencies(integrationName string) tea.Cmd {
+	return func() tea.Msg {
+		deps, err := m.client.GetDependencies(integrationName)
+		return DependencyCheckMsg{
+			Integration:  integrationName,
+			Dependencies: deps,
+			Err:          err,
+		}
+	}
 }
 
 // loadLLMData loads providers and profiles for the current LLM integration.

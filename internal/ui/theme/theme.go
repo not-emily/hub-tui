@@ -12,6 +12,9 @@ var (
 	Error         = lipgloss.Color("#d46a6a") // Soft red
 	Success       = lipgloss.Color("#6ad47c") // Soft green
 	Warning       = lipgloss.Color("#d4a96a") // Soft orange
+	Border        = lipgloss.Color("#3a3a3a") // Border color
+	BorderActive  = lipgloss.Color("#4a5a6a") // Active border/highlight
+	Link          = lipgloss.Color("#7c9fc7") // Link color (same as Accent)
 )
 
 // Base styles
