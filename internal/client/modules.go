@@ -7,10 +7,11 @@ import (
 
 // Module represents a module from hub-core.
 type Module struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Enabled     bool   `json:"enabled"`
-	Version     string `json:"version"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Enabled     bool     `json:"enabled"`
+	Version     string   `json:"version"`
+	Tools       []string `json:"tools"`
 }
 
 // modulesResponse is the API response wrapper.

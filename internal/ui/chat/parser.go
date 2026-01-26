@@ -25,6 +25,7 @@ var KnownCommands = []string{
 	"help",
 	"hub",
 	"refresh",
+	"assistants",
 	"modules",
 	"integrations",
 	"workflows",
