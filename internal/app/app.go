@@ -272,6 +272,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case modal.AvailableModulesLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.ModuleInstalledMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.ModuleUninstallResultMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.ModuleUninstalledMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.ModuleUpdatedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
 	case modal.AssistantsLoadedMsg:
 		if msg.Error != nil && client.IsAuthError(msg.Error) {
 			return m.handleAuthExpired()
@@ -863,7 +908,7 @@ func (m Model) handleCommand(cmd *chat.Command) (tea.Model, tea.Cmd) {
 		return m, m.modal.Open(modal.NewAssistantsModal(m.client))
 
 	case "modules":
-		return m, m.modal.Open(modal.NewModulesModal(m.client))
+		return m, m.modal.Open(modal.NewModulesModal(m.client, m.isAdmin))
 
 	case "workflows":
 		return m, m.modal.Open(modal.NewWorkflowsModal(m.client))
