@@ -119,6 +119,43 @@ type modelsResponse struct {
 	Pagination  ModelsPagination `json:"pagination"`
 }
 
+// IntegrationProfile represents a profile for an integration.
+type IntegrationProfile struct {
+	Name      string `json:"name"`
+	IsDefault bool   `json:"is_default"`
+}
+
+// integrationProfilesResponse is the API response for listing profiles.
+type integrationProfilesResponse struct {
+	Profiles []IntegrationProfile `json:"profiles"`
+}
+
+// GetIntegrationProfiles fetches profile names for any integration.
+func (c *Client) GetIntegrationProfiles(name string) ([]string, error) {
+	resp, err := c.get("/integrations/" + name + "/profiles")
+	if err != nil {
+		return nil, fmt.Errorf("cannot connect to server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, parseError(resp)
+	}
+
+	var result integrationProfilesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("invalid response from server: %w", err)
+	}
+
+	// Extract just the names
+	names := make([]string, len(result.Profiles))
+	for i, p := range result.Profiles {
+		names[i] = p.Name
+	}
+
+	return names, nil
+}
+
 // ListIntegrationModels fetches available models for an integration with pagination.
 func (c *Client) ListIntegrationModels(name string, limit int, cursor string) (*ModelsResult, error) {
 	path := "/integrations/" + name + "/models?limit=" + fmt.Sprintf("%d", limit)

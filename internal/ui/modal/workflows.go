@@ -9,7 +9,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/pxp/hub-tui/internal/client"
+	"github.com/pxp/hub-tui/internal/ui/components"
 	"github.com/pxp/hub-tui/internal/ui/theme"
+)
+
+// workflowsView represents the current view state.
+type workflowsView int
+
+const (
+	wfViewList workflowsView = iota
+	wfViewBuilder
 )
 
 // WorkflowsModal displays and manages workflows.
@@ -19,6 +28,11 @@ type WorkflowsModal struct {
 	selected  int
 	loading   bool
 	error     string
+
+	// View state
+	view    workflowsView
+	builder *WorkflowBuilder
+	confirm *components.Confirmation
 }
 
 // NewWorkflowsModal creates a new workflows modal.
@@ -26,6 +40,8 @@ func NewWorkflowsModal(c *client.Client) *WorkflowsModal {
 	return &WorkflowsModal{
 		client:  c,
 		loading: true,
+		view:    wfViewList,
+		confirm: components.NewConfirmation(),
 	}
 }
 
@@ -33,6 +49,25 @@ func NewWorkflowsModal(c *client.Client) *WorkflowsModal {
 type WorkflowsLoadedMsg struct {
 	Workflows []client.Workflow
 	Error     error
+}
+
+// WorkflowLoadedMsg is sent when a single workflow is loaded for editing.
+type WorkflowLoadedMsg struct {
+	Workflow *client.Workflow
+	Error    error
+}
+
+// WorkflowDeletedMsg is sent when a workflow is deleted.
+type WorkflowDeletedMsg struct {
+	Name  string
+	Error error
+}
+
+// WorkflowSavedMsg is sent when a workflow is saved.
+type WorkflowSavedMsg struct {
+	Name  string
+	IsNew bool
+	Error error
 }
 
 // WorkflowRunMsg is sent when a workflow run is initiated.
@@ -53,9 +88,28 @@ func (m *WorkflowsModal) loadWorkflows() tea.Cmd {
 	}
 }
 
+func (m *WorkflowsModal) loadWorkflowForEdit(name string) tea.Cmd {
+	return func() tea.Msg {
+		wf, err := m.client.GetWorkflow(name)
+		return WorkflowLoadedMsg{Workflow: wf, Error: err}
+	}
+}
+
+func (m *WorkflowsModal) deleteWorkflow(name string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.client.DeleteWorkflow(name)
+		return WorkflowDeletedMsg{Name: name, Error: err}
+	}
+}
+
 // Update handles input.
 func (m *WorkflowsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
+	// Handle messages regardless of view
 	switch msg := msg.(type) {
+	case components.ConfirmationExpiredMsg:
+		m.confirm.HandleExpired(msg)
+		return m, nil
+
 	case WorkflowsLoadedMsg:
 		m.loading = false
 		if msg.Error != nil {
@@ -63,37 +117,163 @@ func (m *WorkflowsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		} else {
 			m.workflows = msg.Workflows
 			m.error = ""
+			// Adjust selection if out of bounds
+			if m.selected >= len(m.workflows) && m.selected > 0 {
+				m.selected = len(m.workflows) - 1
+			}
 		}
 		return m, nil
 
+	case WorkflowLoadedMsg:
+		m.loading = false
+		if msg.Error != nil {
+			m.error = msg.Error.Error()
+		} else {
+			m.builder = NewWorkflowBuilder(m.client, false)
+			m.builder.LoadWorkflow(msg.Workflow)
+			m.view = wfViewBuilder
+			m.error = ""
+			return m, m.builder.Init()
+		}
+		return m, nil
+
+	case WorkflowDeletedMsg:
+		m.loading = false
+		if msg.Error != nil {
+			m.error = msg.Error.Error()
+		} else {
+			m.error = ""
+			// Refresh list
+			m.loading = true
+			return m, m.loadWorkflows()
+		}
+		return m, nil
+
+	case WorkflowSavedMsg:
+		m.loading = false
+		if msg.Error != nil {
+			m.error = msg.Error.Error()
+		} else {
+			m.error = ""
+			m.builder = nil
+			m.view = wfViewList
+			// Refresh list
+			m.loading = true
+			return m, m.loadWorkflows()
+		}
+		return m, nil
+	}
+
+	// Route to appropriate view handler
+	switch m.view {
+	case wfViewBuilder:
+		return m.updateBuilder(msg)
+	default:
+		return m.updateList(msg)
+	}
+}
+
+func (m *WorkflowsModal) updateList(msg tea.Msg) (Modal, tea.Cmd) {
+	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "esc":
+		case "esc", "q":
 			return nil, nil // Close modal
+
 		case "up", "k":
+			m.confirm.Clear()
 			if m.selected > 0 {
 				m.selected--
 			}
+
 		case "down", "j":
+			m.confirm.Clear()
 			if m.selected < len(m.workflows)-1 {
 				m.selected++
 			}
+
 		case "r":
+			m.confirm.Clear()
 			m.loading = true
 			m.error = ""
 			return m, m.loadWorkflows()
+
+		case "n":
+			m.confirm.Clear()
+			// Create new workflow
+			m.builder = NewWorkflowBuilder(m.client, true)
+			m.view = wfViewBuilder
+			return m, m.builder.Init()
+
+		case "e", "enter":
+			m.confirm.Clear()
+			// Edit selected workflow
+			if len(m.workflows) > 0 {
+				m.loading = true
+				m.error = ""
+				return m, m.loadWorkflowForEdit(m.workflows[m.selected].Name)
+			}
+
+		case "d":
+			// Delete selected workflow (double-press confirmation)
+			if len(m.workflows) > 0 {
+				wf := m.workflows[m.selected]
+				if execute, cmd := m.confirm.Check("delete", wf.Name); execute {
+					m.loading = true
+					return m, m.deleteWorkflow(wf.Name)
+				} else if cmd != nil {
+					return m, cmd
+				}
+			}
 		}
 	}
 	return m, nil
 }
 
+func (m *WorkflowsModal) updateBuilder(msg tea.Msg) (Modal, tea.Cmd) {
+	if m.builder == nil {
+		m.view = wfViewList
+		return m, nil
+	}
+
+	builder, cmd := m.builder.Update(msg)
+	if builder == nil {
+		// Builder closed
+		m.builder = nil
+		m.view = wfViewList
+		return m, nil
+	}
+	m.builder = builder
+	return m, cmd
+}
+
 // Title returns the modal title.
 func (m *WorkflowsModal) Title() string {
-	return "Workflows"
+	switch m.view {
+	case wfViewBuilder:
+		if m.builder != nil && !m.builder.IsNew {
+			return "Edit Workflow"
+		}
+		return "Create Workflow"
+	default:
+		return "Workflows"
+	}
 }
 
 // View renders the modal content.
 func (m *WorkflowsModal) View() string {
+	switch m.view {
+	case wfViewBuilder:
+		if m.builder != nil {
+			return m.builder.View()
+		}
+		return "Loading..."
+	default:
+		return m.renderList()
+	}
+}
+
+func (m *WorkflowsModal) renderList() string {
 	if m.loading {
 		return lipgloss.NewStyle().
 			Foreground(theme.TextSecondary).
@@ -107,14 +287,18 @@ func (m *WorkflowsModal) View() string {
 			lipgloss.Left,
 			errorStyle.Render("Error: "+m.error),
 			"",
-			hintStyle.Render("[r] Retry"),
+			hintStyle.Render("[r] Retry  [n] New workflow"),
 		)
 	}
 
 	if len(m.workflows) == 0 {
-		return lipgloss.NewStyle().
-			Foreground(theme.TextSecondary).
-			Render("No workflows found.")
+		dimStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			dimStyle.Render("No workflows found."),
+			"",
+			dimStyle.Render("[n] Create new workflow"),
+		)
 	}
 
 	var lines []string
@@ -200,7 +384,15 @@ func (m *WorkflowsModal) View() string {
 	legendStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
 	lines = append(lines, legendStyle.Render("  ● enabled  ○ disabled"))
 	lines = append(lines, "")
-	lines = append(lines, legendStyle.Render("  Use #workflow to run  [r] Refresh"))
+
+	// Show delete confirmation warning or normal hints
+	wf := m.workflows[m.selected]
+	if m.confirm.IsPending("delete", wf.Name) {
+		warningStyle := lipgloss.NewStyle().Foreground(theme.Warning)
+		lines = append(lines, warningStyle.Render("  Press d again to delete"))
+	} else {
+		lines = append(lines, legendStyle.Render("  [n]ew  [e]dit  [d]elete  [r]efresh"))
+	}
 
 	return strings.Join(lines, "\n")
 }

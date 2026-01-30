@@ -425,6 +425,75 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case modal.WorkflowLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.WorkflowDeletedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.WorkflowSavedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.SchedulePreviewedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.BuilderToolsLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case components.TreeCancelledMsg:
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.StepProfilesLoadedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
+	case modal.StepTestedMsg:
+		if msg.Error != nil && client.IsAuthError(msg.Error) {
+			return m.handleAuthExpired()
+		}
+		if m.modal.IsOpen() {
+			_, cmd := m.modal.UpdateMsg(msg)
+			return m, cmd
+		}
+
 	case modal.IntegrationsLoadedMsg:
 		if msg.Error != nil && client.IsAuthError(msg.Error) {
 			return m.handleAuthExpired()
