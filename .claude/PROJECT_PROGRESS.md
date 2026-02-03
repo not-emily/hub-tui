@@ -12,7 +12,7 @@ Last Updated: 2026-02-03
 v9-workflow-builder: Visual workflow builder for creating automations without writing JSON
 
 ## Active Tasks
-- [IN PROGRESS] Phase 8: Transform Forms
+- [COMPLETE] Phase 8: Transform Forms
   - ✓ Transform operation picker (Filter, Extract, Sort, First, Last, Count)
   - ✓ Filter form with field/operator/value
   - ✓ Extract form with field mappings
@@ -29,7 +29,7 @@ v9-workflow-builder: Visual workflow builder for creating automations without wr
     - ✓ /tasks modal JSON unmarshal error (RunResult.Output: string→interface{})
   - ✓ Clean up debug logging (disabled logging to debug.log)
   - ✓ `needs_attention_on_complete` workflow toggle (Notify: Yes/No)
-  - ⏭ Final validation testing
+- [NEXT] Phase 9: Validation & Polish
 
 ## Open Questions/Blockers
 None
@@ -61,6 +61,5 @@ None
 - Refactor all text fields to use "[Enter to edit]" / "[Enter to confirm]" pattern (like workflow name field)
 
 ## Next Session
-- Final validation testing for Phase 8
-- Commit current changes
 - Phase 9: Validation & Polish
+- Archive v9-workflow-builder plan when complete
