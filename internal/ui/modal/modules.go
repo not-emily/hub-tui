@@ -68,6 +68,9 @@ type ModulesLoadedMsg struct {
 	Error   error
 }
 
+func (m ModulesLoadedMsg) IsAsyncModalMessage() {}
+func (m ModulesLoadedMsg) AuthError() error     { return m.Error }
+
 // ModuleToggledMsg is sent when a module is toggled.
 type ModuleToggledMsg struct {
 	Name    string
@@ -75,11 +78,17 @@ type ModuleToggledMsg struct {
 	Error   error
 }
 
+func (m ModuleToggledMsg) IsAsyncModalMessage() {}
+func (m ModuleToggledMsg) AuthError() error     { return m.Error }
+
 // AvailableModulesLoadedMsg is sent when available modules are loaded.
 type AvailableModulesLoadedMsg struct {
 	Modules []client.AvailableModule
 	Error   error
 }
+
+func (m AvailableModulesLoadedMsg) IsAsyncModalMessage() {}
+func (m AvailableModulesLoadedMsg) AuthError() error     { return m.Error }
 
 // ModuleInstalledMsg is sent when a module is installed.
 type ModuleInstalledMsg struct {
@@ -87,11 +96,17 @@ type ModuleInstalledMsg struct {
 	Error error
 }
 
+func (m ModuleInstalledMsg) IsAsyncModalMessage() {}
+func (m ModuleInstalledMsg) AuthError() error     { return m.Error }
+
 // ModuleUninstallResultMsg is sent after initial uninstall attempt.
 type ModuleUninstallResultMsg struct {
 	Result *client.UninstallResult
 	Error  error
 }
+
+func (m ModuleUninstallResultMsg) IsAsyncModalMessage() {}
+func (m ModuleUninstallResultMsg) AuthError() error     { return m.Error }
 
 // ModuleUninstalledMsg is sent when a module is force uninstalled.
 type ModuleUninstalledMsg struct {
@@ -99,11 +114,17 @@ type ModuleUninstalledMsg struct {
 	Error error
 }
 
+func (m ModuleUninstalledMsg) IsAsyncModalMessage() {}
+func (m ModuleUninstalledMsg) AuthError() error     { return m.Error }
+
 // ModuleUpdatedMsg is sent when a module is updated.
 type ModuleUpdatedMsg struct {
 	Result *client.UpdateResult
 	Error  error
 }
+
+func (m ModuleUpdatedMsg) IsAsyncModalMessage() {}
+func (m ModuleUpdatedMsg) AuthError() error     { return m.Error }
 
 // Init initializes the modal and triggers data fetch.
 func (m *ModulesModal) Init() tea.Cmd {

@@ -29,6 +29,9 @@ type SchedulePreviewedMsg struct {
 	Error   error
 }
 
+func (m SchedulePreviewedMsg) IsAsyncModalMessage() {}
+func (m SchedulePreviewedMsg) AuthError() error     { return m.Error }
+
 // ScheduleForm handles trigger configuration.
 type ScheduleForm struct {
 	client *client.Client
@@ -40,6 +43,9 @@ type ScheduleForm struct {
 	Frequency string   // "daily", "weekly", "monthly"
 	Time      string   // "HH:MM" format
 	Days      []string // ["MON", "TUE", ...] for weekly
+
+	// Original cron from loaded workflow (used as fallback)
+	OriginalCron string
 
 	// Preview
 	Preview *client.SchedulePreview
@@ -57,11 +63,12 @@ type ScheduleForm struct {
 // NewScheduleForm creates a new schedule form.
 func NewScheduleForm(c *client.Client, trigger client.TriggerConfig) *ScheduleForm {
 	f := &ScheduleForm{
-		client:      c,
-		TriggerType: trigger.Type,
-		Frequency:   trigger.Frequency,
-		Time:        trigger.Time,
-		Days:        trigger.Days,
+		client:       c,
+		TriggerType:  trigger.Type,
+		Frequency:    trigger.Frequency,
+		Time:         trigger.Time,
+		Days:         trigger.Days,
+		OriginalCron: trigger.Cron, // Preserve original cron as fallback
 	}
 
 	// Defaults
@@ -340,9 +347,11 @@ func (f *ScheduleForm) ToTriggerConfig() client.TriggerConfig {
 		Days:      f.Days,
 	}
 
-	// Use generated cron if available
+	// Use generated cron if available, otherwise fall back to original
 	if f.Preview != nil {
 		config.Cron = f.Preview.Cron
+	} else if f.OriginalCron != "" {
+		config.Cron = f.OriginalCron
 	}
 
 	return config

@@ -38,11 +38,17 @@ type LLMDataLoadedMsg struct {
 	Error     error
 }
 
+func (m LLMDataLoadedMsg) IsAsyncModalMessage() {}
+func (m LLMDataLoadedMsg) AuthError() error     { return m.Error }
+
 // LLMAvailableProvidersMsg is sent when available providers are loaded for the form.
 type LLMAvailableProvidersMsg struct {
 	Providers []client.AvailableProvider
 	Err       error
 }
+
+func (m LLMAvailableProvidersMsg) IsAsyncModalMessage() {}
+func (m LLMAvailableProvidersMsg) AuthError() error     { return m.Err }
 
 // LLMProviderFieldsMsg is sent when provider field requirements are loaded.
 type LLMProviderFieldsMsg struct {
@@ -51,20 +57,32 @@ type LLMProviderFieldsMsg struct {
 	Err      error
 }
 
+func (m LLMProviderFieldsMsg) IsAsyncModalMessage() {}
+func (m LLMProviderFieldsMsg) AuthError() error     { return m.Err }
+
 // LLMProviderSavedMsg is sent when a provider is added.
 type LLMProviderSavedMsg struct {
 	Err error
 }
+
+func (m LLMProviderSavedMsg) IsAsyncModalMessage() {}
+func (m LLMProviderSavedMsg) AuthError() error     { return m.Err }
 
 // LLMProviderDeletedMsg is sent when a provider is deleted.
 type LLMProviderDeletedMsg struct {
 	Err error
 }
 
+func (m LLMProviderDeletedMsg) IsAsyncModalMessage() {}
+func (m LLMProviderDeletedMsg) AuthError() error     { return m.Err }
+
 // LLMErrorMsg is sent when an LLM operation fails.
 type LLMErrorMsg struct {
 	Err error
 }
+
+func (m LLMErrorMsg) IsAsyncModalMessage() {}
+func (m LLMErrorMsg) AuthError() error     { return m.Err }
 
 // LLMModelsLoadedMsg is sent when models are loaded for the profile form.
 type LLMModelsLoadedMsg struct {
@@ -74,15 +92,24 @@ type LLMModelsLoadedMsg struct {
 	Err        error
 }
 
+func (m LLMModelsLoadedMsg) IsAsyncModalMessage() {}
+func (m LLMModelsLoadedMsg) AuthError() error     { return m.Err }
+
 // LLMProfileSavedMsg is sent when a profile is saved.
 type LLMProfileSavedMsg struct {
 	Err error
 }
 
+func (m LLMProfileSavedMsg) IsAsyncModalMessage() {}
+func (m LLMProfileSavedMsg) AuthError() error     { return m.Err }
+
 // LLMProfileDeletedMsg is sent when a profile is deleted.
 type LLMProfileDeletedMsg struct {
 	Err error
 }
+
+func (m LLMProfileDeletedMsg) IsAsyncModalMessage() {}
+func (m LLMProfileDeletedMsg) AuthError() error     { return m.Err }
 
 // LLMProfileTestedMsg is sent when a profile connectivity test completes.
 type LLMProfileTestedMsg struct {
@@ -90,10 +117,16 @@ type LLMProfileTestedMsg struct {
 	Err    error
 }
 
+func (m LLMProfileTestedMsg) IsAsyncModalMessage() {}
+func (m LLMProfileTestedMsg) AuthError() error     { return m.Err }
+
 // LLMProfileDefaultSetMsg is sent when a profile is set as default.
 type LLMProfileDefaultSetMsg struct {
 	Err error
 }
+
+func (m LLMProfileDefaultSetMsg) IsAsyncModalMessage() {}
+func (m LLMProfileDefaultSetMsg) AuthError() error     { return m.Err }
 
 // enterLLMConfig enters the LLM configuration view for the given integration.
 // First checks if dependencies are satisfied before allowing config.

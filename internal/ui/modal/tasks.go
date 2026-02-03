@@ -1,6 +1,7 @@
 package modal
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -39,10 +40,19 @@ func isRunSuccess(r client.Run) bool {
 
 // formatRunOutput extracts a readable output string from the run result.
 func formatRunOutput(result *client.RunResult) string {
-	if result == nil {
+	if result == nil || result.Output == nil {
 		return ""
 	}
-	return result.Output
+	// Handle string output directly
+	if s, ok := result.Output.(string); ok {
+		return s
+	}
+	// For objects/arrays, marshal to pretty JSON
+	b, err := json.MarshalIndent(result.Output, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("%v", result.Output)
+	}
+	return string(b)
 }
 
 // TasksModal displays running, completed, and failed tasks.
@@ -185,11 +195,17 @@ type TasksLoadedMsg struct {
 	Error          error
 }
 
+func (m TasksLoadedMsg) IsAsyncModalMessage() {}
+func (m TasksLoadedMsg) AuthError() error     { return m.Error }
+
 // TaskDetailLoadedMsg is sent when full run details are loaded.
 type TaskDetailLoadedMsg struct {
 	Run   *TaskRun
 	Error error
 }
+
+func (m TaskDetailLoadedMsg) IsAsyncModalMessage() {}
+func (m TaskDetailLoadedMsg) AuthError() error     { return m.Error }
 
 // TaskCancelRequestMsg is sent when a cancel is requested.
 type TaskCancelRequestMsg struct {
@@ -202,6 +218,9 @@ type TaskDismissedMsg struct {
 	Error error
 }
 
+func (m TaskDismissedMsg) IsAsyncModalMessage() {}
+func (m TaskDismissedMsg) AuthError() error     { return m.Error }
+
 // HistoryLoadedMsg is sent when history is loaded.
 type HistoryLoadedMsg struct {
 	Runs       []TaskRun
@@ -211,6 +230,9 @@ type HistoryLoadedMsg struct {
 	Page       int // Which page was loaded
 	Error      error
 }
+
+func (m HistoryLoadedMsg) IsAsyncModalMessage() {}
+func (m HistoryLoadedMsg) AuthError() error     { return m.Error }
 
 // Init initializes the modal.
 func (m *TasksModal) Init() tea.Cmd {

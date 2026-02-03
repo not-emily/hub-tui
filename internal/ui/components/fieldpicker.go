@@ -12,6 +12,16 @@ import (
 	"github.com/pxp/hub-tui/internal/ui/theme"
 )
 
+func debugLog(msg string) {
+	// Debug logging disabled - uncomment to enable
+	// f, _ := os.OpenFile("debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	// if f != nil {
+	// 	f.WriteString(msg + "\n")
+	// 	f.Close()
+	// }
+	_ = msg
+}
+
 // FieldSelectedMsg is sent when a field is selected.
 type FieldSelectedMsg struct {
 	Path string
@@ -20,14 +30,27 @@ type FieldSelectedMsg struct {
 // FieldCancelledMsg is sent when field selection is cancelled.
 type FieldCancelledMsg struct{}
 
+// PickerNeedsTestMsg is sent when the picker needs a variable's step to be tested.
+type PickerNeedsTestMsg struct {
+	VarName string
+}
+
+// PickerTestResultMsg is sent when a test requested by the picker completes.
+type PickerTestResultMsg struct {
+	VarName string
+	Output  interface{}
+	Error   error
+}
+
 // ExtractedField represents a field extracted from JSON.
 type ExtractedField struct {
-	Name      string      // friendly name (e.g., "Name", "Status")
-	Path      string      // relative path (e.g., ".properties.Name.title[0].plain_text")
-	Value     interface{} // sample value from first item
-	ValueStr  string      // string representation for display
-	Type      string      // "string", "number", "boolean", "array", "object"
-	FromArray bool        // true if extracted from array item
+	Name       string      // friendly name (e.g., "Name", "Status")
+	Path       string      // relative path (e.g., ".properties.Name.title[0].plain_text")
+	Value      interface{} // sample value from first item
+	ValueStr   string      // string representation for display
+	Type       string      // "string", "number", "boolean", "array", "object", "array_item", "field_value"
+	FromArray  bool        // true if extracted from array item (selecting shows value picker)
+	ArrayIndex int         // for array_item/field_value type: which index this represents
 }
 
 // FieldPicker lets user select a field from step output.
@@ -39,9 +62,8 @@ type FieldPicker struct {
 	Selected  int
 	height    int
 
-	// Array handling
-	showArrayChoice bool
-	arrayChoice     int // 0 = first item, 1 = all items
+	// Navigation into nested structures
+	navStack []navLevel // stack of navigation levels for drilling into arrays/objects
 
 	// Raw mode fallback
 	RawMode bool
@@ -50,9 +72,24 @@ type FieldPicker struct {
 	// Multi-step support
 	multiStep       bool                   // true if showing multiple steps
 	allSteps        map[string]interface{} // all previous step outputs
-	stepNames       []string               // ordered step names
+	varNames        []string               // ordered variable names (save_as values)
+	varToStepName   map[string]string      // variable name -> step name mapping
 	selectingStep   bool                   // true when picking which step
 	selectedStepIdx int                    // selected step index
+
+	// Test request state (when variable has no output yet)
+	awaitingTest    bool   // true when waiting for test result
+	awaitingTestVar string // variable name we're waiting on
+	testError       string // error from test if any
+}
+
+// navLevel tracks a level in the navigation stack
+type navLevel struct {
+	path       string        // path to this level (e.g., ".recipes" or "[0]")
+	isArray    bool          // true if this level is an array
+	arrayData  []interface{} // the array data (for extracting field values)
+	fieldPath  string        // if showing field values, the field path (e.g., ".name")
+	selected   int           // selected index before drilling (for restoring)
 }
 
 // NewFieldPicker creates a new field picker for a single step's output.
@@ -68,28 +105,22 @@ func NewFieldPicker(stepName string, output interface{}) *FieldPicker {
 }
 
 // NewFieldPickerMulti creates a field picker for multiple previous steps.
-func NewFieldPickerMulti(stepOutputs map[string]interface{}) *FieldPicker {
+// stepOutputs maps variable name (save_as) -> output value
+// varToStepName maps variable name -> step name (for display)
+func NewFieldPickerMulti(stepOutputs map[string]interface{}, varToStepName map[string]string) *FieldPicker {
 	p := &FieldPicker{
-		height:    10,
-		multiStep: true,
-		allSteps:  stepOutputs,
+		height:        10,
+		multiStep:     true,
+		allSteps:      stepOutputs,
+		varToStepName: varToStepName,
+		selectingStep: true, // Always show variable selection first
 	}
 
-	// Get sorted step names for consistent ordering
+	// Get sorted variable names for consistent ordering
 	for name := range stepOutputs {
-		p.stepNames = append(p.stepNames, name)
+		p.varNames = append(p.varNames, name)
 	}
-	sort.Strings(p.stepNames)
-
-	// If only one step, go directly to its fields
-	if len(p.stepNames) == 1 {
-		p.multiStep = false
-		p.StepName = p.stepNames[0]
-		p.RawOutput = stepOutputs[p.stepNames[0]]
-		p.extractFields()
-	} else {
-		p.selectingStep = true
-	}
+	sort.Strings(p.varNames)
 
 	return p
 }
@@ -100,22 +131,322 @@ func (p *FieldPicker) SetHeight(height int) {
 }
 
 func (p *FieldPicker) extractFields() {
-	// Find the items array
-	itemsPath, items := p.findItemsArray(p.RawOutput)
-	p.ItemsPath = itemsPath
-
-	if items != nil && len(items) > 0 {
-		// Extract from first item
-		p.Fields = p.extractFromItem(items[0], true)
-	} else {
-		// Not an array, extract from root
-		p.Fields = p.extractFromItem(p.RawOutput, false)
-	}
+	// Always extract from root object first - don't auto-drill into arrays
+	// This gives users control over what level they want to select
+	p.ItemsPath = ""
+	p.Fields = p.extractTopLevelFields(p.RawOutput)
 
 	// Sort fields by name
 	sort.Slice(p.Fields, func(i, j int) bool {
 		return p.Fields[i].Name < p.Fields[j].Name
 	})
+
+	// Add "(entire variable)" option at the top
+	entireVar := ExtractedField{
+		Name:      "(entire variable)",
+		Path:      "", // empty path means just $stepName
+		Value:     p.RawOutput,
+		ValueStr:  p.describeRootOutput(),
+		Type:      typeOf(p.RawOutput),
+		FromArray: false,
+	}
+	p.Fields = append([]ExtractedField{entireVar}, p.Fields...)
+}
+
+// describeRootOutput returns a brief description of the actual root output structure.
+func (p *FieldPicker) describeRootOutput() string {
+	switch v := p.RawOutput.(type) {
+	case map[string]interface{}:
+		return fmt.Sprintf("{%d keys}", len(v))
+	case []interface{}:
+		return fmt.Sprintf("[%d items]", len(v))
+	default:
+		return truncateValue(formatValue(v), 20)
+	}
+}
+
+// extractTopLevelFields extracts fields from the root level of the data.
+// For objects, it shows each key. For arrays, it shows item fields with array notation.
+func (p *FieldPicker) extractTopLevelFields(data interface{}) []ExtractedField {
+	var fields []ExtractedField
+
+	switch v := data.(type) {
+	case map[string]interface{}:
+		// Show each key in the object
+		for key, val := range v {
+			field := ExtractedField{
+				Name:      key,
+				Path:      "." + key,
+				Value:     val,
+				Type:      typeOf(val),
+				FromArray: false,
+			}
+			// Format the value description
+			switch tv := val.(type) {
+			case []interface{}:
+				field.ValueStr = fmt.Sprintf("[%d items]", len(tv))
+			case map[string]interface{}:
+				field.ValueStr = fmt.Sprintf("{%d keys}", len(tv))
+			default:
+				field.ValueStr = formatValue(val)
+			}
+			fields = append(fields, field)
+		}
+
+	case []interface{}:
+		// Data is an array at root - show fields from first item
+		if len(v) > 0 {
+			// Push a synthetic nav level for the root array
+			p.navStack = []navLevel{{
+				path:      "",
+				isArray:   true,
+				arrayData: v,
+			}}
+			fields = p.extractFromItem(v[0], true)
+			// Sort fields
+			sort.Slice(fields, func(i, j int) bool {
+				return fields[i].Name < fields[j].Name
+			})
+			// Add "(entire variable)" option
+			entireVar := ExtractedField{
+				Name:     "(entire variable)",
+				Path:     "",
+				Value:    v,
+				ValueStr: fmt.Sprintf("[%d items]", len(v)),
+				Type:     "array",
+			}
+			fields = append([]ExtractedField{entireVar}, fields...)
+		}
+	}
+
+	return fields
+}
+
+const maxArrayItemsToShow = 20
+
+// extractArrayItems creates fields for each item in an array (for index selection).
+func (p *FieldPicker) extractArrayItems(arr []interface{}) []ExtractedField {
+	var fields []ExtractedField
+
+	// Add "(entire array)" option first
+	entireArray := ExtractedField{
+		Name:     "(entire array)",
+		Path:     "", // empty means just the array itself
+		Value:    arr,
+		ValueStr: fmt.Sprintf("[%d items]", len(arr)),
+		Type:     "array",
+	}
+	fields = append(fields, entireArray)
+
+	// Add each array item (capped for large arrays)
+	limit := len(arr)
+	if limit > maxArrayItemsToShow {
+		limit = maxArrayItemsToShow
+	}
+
+	for i := 0; i < limit; i++ {
+		item := arr[i]
+		// Create a preview of the item
+		preview := p.itemPreview(item)
+		fields = append(fields, ExtractedField{
+			Name:       fmt.Sprintf("[%d]", i),
+			Path:       fmt.Sprintf("[%d]", i),
+			Value:      item,
+			ValueStr:   preview,
+			Type:       "array_item",
+			ArrayIndex: i,
+		})
+	}
+
+	// If array was truncated, add indicator
+	if len(arr) > maxArrayItemsToShow {
+		fields = append(fields, ExtractedField{
+			Name:     fmt.Sprintf("... and %d more", len(arr)-maxArrayItemsToShow),
+			Path:     "",
+			ValueStr: "(use raw view for full list)",
+			Type:     "truncated",
+		})
+	}
+
+	return fields
+}
+
+// extractFieldValues extracts values of a specific field from all array items.
+// Shows field values so user can pick which array index they want.
+func (p *FieldPicker) extractFieldValues(arr []interface{}, fieldPath string) []ExtractedField {
+	var fields []ExtractedField
+
+	// Cap at maxArrayItemsToShow
+	limit := len(arr)
+	if limit > maxArrayItemsToShow {
+		limit = maxArrayItemsToShow
+	}
+
+	for i := 0; i < limit; i++ {
+		item := arr[i]
+		// Extract the field value from this item
+		val := p.getFieldValue(item, fieldPath)
+		fields = append(fields, ExtractedField{
+			Name:       fmt.Sprintf("[%d]", i),
+			Path:       fmt.Sprintf("[%d]%s", i, fieldPath),
+			Value:      val,
+			ValueStr:   truncateValue(formatValue(val), 40),
+			Type:       "field_value",
+			ArrayIndex: i,
+		})
+	}
+
+	// If array was truncated, add indicator
+	if len(arr) > maxArrayItemsToShow {
+		fields = append(fields, ExtractedField{
+			Name:     fmt.Sprintf("... and %d more", len(arr)-maxArrayItemsToShow),
+			Path:     "",
+			ValueStr: "(use raw view for full list)",
+			Type:     "truncated",
+		})
+	}
+
+	return fields
+}
+
+// getFieldValue extracts a value from an object using a field path like ".name" or ".category".
+func (p *FieldPicker) getFieldValue(item interface{}, fieldPath string) interface{} {
+	if fieldPath == "" {
+		return item
+	}
+
+	obj, ok := item.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	// Parse the field path - handle simple ".field" case
+	path := strings.TrimPrefix(fieldPath, ".")
+	parts := strings.SplitN(path, ".", 2)
+	key := parts[0]
+
+	val, ok := obj[key]
+	if !ok {
+		return nil
+	}
+
+	// If there's more path, recurse
+	if len(parts) > 1 {
+		return p.getFieldValue(val, "."+parts[1])
+	}
+
+	return val
+}
+
+// itemPreview returns a short preview string for an array item.
+func (p *FieldPicker) itemPreview(item interface{}) string {
+	switch v := item.(type) {
+	case map[string]interface{}:
+		// Try common name fields first
+		for _, key := range []string{"name", "title", "id", "label", "text", "value", "description", "subject", "content"} {
+			if val, ok := v[key]; ok {
+				if str := extractStringValue(val); str != "" {
+					return truncateValue(str, 35)
+				}
+			}
+		}
+		// Check for Notion-style properties.Name.title structure
+		if props, ok := v["properties"].(map[string]interface{}); ok {
+			for _, key := range []string{"Name", "Title", "name", "title"} {
+				if prop, ok := props[key].(map[string]interface{}); ok {
+					if str := extractNotionText(prop); str != "" {
+						return truncateValue(str, 35)
+					}
+				}
+			}
+		}
+		// Fall back to showing first few key-value pairs
+		return p.objectPreview(v, 35)
+	case []interface{}:
+		return fmt.Sprintf("[%d items]", len(v))
+	default:
+		return truncateValue(formatValue(item), 35)
+	}
+}
+
+// extractStringValue tries to get a string from various value types.
+func extractStringValue(val interface{}) string {
+	switch v := val.(type) {
+	case string:
+		return v
+	case float64:
+		if v == float64(int(v)) {
+			return fmt.Sprintf("%d", int(v))
+		}
+		return fmt.Sprintf("%.2f", v)
+	case bool:
+		return fmt.Sprintf("%v", v)
+	default:
+		return ""
+	}
+}
+
+// extractNotionText extracts text from Notion property structures.
+func extractNotionText(prop map[string]interface{}) string {
+	// title: [{plain_text: "..."}]
+	if title, ok := prop["title"].([]interface{}); ok && len(title) > 0 {
+		if first, ok := title[0].(map[string]interface{}); ok {
+			if text, ok := first["plain_text"].(string); ok {
+				return text
+			}
+		}
+	}
+	// rich_text: [{plain_text: "..."}]
+	if richText, ok := prop["rich_text"].([]interface{}); ok && len(richText) > 0 {
+		if first, ok := richText[0].(map[string]interface{}); ok {
+			if text, ok := first["plain_text"].(string); ok {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+// objectPreview returns a preview of an object's first few fields.
+func (p *FieldPicker) objectPreview(obj map[string]interface{}, maxLen int) string {
+	if len(obj) == 0 {
+		return "{}"
+	}
+	// Get sorted keys for consistent ordering
+	keys := make([]string, 0, len(obj))
+	for k := range obj {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var parts []string
+	totalLen := 2 // for "{ }"
+	for _, k := range keys {
+		v := obj[k]
+		var valStr string
+		switch tv := v.(type) {
+		case string:
+			valStr = fmt.Sprintf(`"%s"`, truncateValue(tv, 15))
+		case float64, bool:
+			valStr = fmt.Sprintf("%v", tv)
+		case []interface{}:
+			valStr = fmt.Sprintf("[%d]", len(tv))
+		case map[string]interface{}:
+			valStr = "{...}"
+		default:
+			valStr = "..."
+		}
+		part := fmt.Sprintf("%s: %s", k, valStr)
+		if totalLen+len(part)+2 > maxLen { // +2 for ", "
+			if len(parts) > 0 {
+				parts = append(parts, "...")
+			}
+			break
+		}
+		parts = append(parts, part)
+		totalLen += len(part) + 2
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
 }
 
 func (p *FieldPicker) findItemsArray(data interface{}) (string, []interface{}) {
@@ -388,7 +719,25 @@ func (p *FieldPicker) extractLeafValues(obj map[string]interface{}, prefix strin
 
 // Update handles input and returns selected path if a field is selected.
 func (p *FieldPicker) Update(msg tea.Msg) (selectedPath string, cmd tea.Cmd) {
-	// Handle step selection phase
+	// Handle test result message
+	if msg, ok := msg.(PickerTestResultMsg); ok {
+		p.awaitingTest = false
+		if msg.Error != nil {
+			p.testError = msg.Error.Error()
+		} else {
+			// Update the output data and extract fields
+			p.allSteps[msg.VarName] = msg.Output
+			p.RawOutput = msg.Output
+			p.testError = ""
+			p.awaitingTestVar = "" // Clear awaiting state
+			p.selectingStep = false // Transition to field selection
+			p.Selected = 0
+			p.extractFields()
+		}
+		return "", nil
+	}
+
+	// Handle step selection phase (or showing "needs test" prompt)
 	if p.selectingStep {
 		return p.handleStepSelection(msg)
 	}
@@ -401,20 +750,12 @@ func (p *FieldPicker) Update(msg tea.Msg) (selectedPath string, cmd tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "j", "down":
-			if p.showArrayChoice {
-				if p.arrayChoice < 1 {
-					p.arrayChoice++
-				}
-			} else if p.Selected < len(p.Fields)-1 {
+			if p.Selected < len(p.Fields)-1 {
 				p.Selected++
 			}
 
 		case "k", "up":
-			if p.showArrayChoice {
-				if p.arrayChoice > 0 {
-					p.arrayChoice--
-				}
-			} else if p.Selected > 0 {
+			if p.Selected > 0 {
 				p.Selected--
 			}
 
@@ -423,20 +764,73 @@ func (p *FieldPicker) Update(msg tea.Msg) (selectedPath string, cmd tea.Cmd) {
 				return "", nil
 			}
 
-			if p.showArrayChoice {
-				// Array choice made, return path
+			field := p.Fields[p.Selected]
+
+			// Ignore truncated indicator
+			if field.Type == "truncated" {
+				return "", nil
+			}
+
+			// Check if this is a field value from the value picker (e.g., selecting "Pasta Salad" from name values)
+			if field.Type == "field_value" {
+				// Return the path with the selected index
 				return p.SelectedPath(), nil
 			}
 
-			field := p.Fields[p.Selected]
-			if field.FromArray {
-				// Show array choice
-				p.showArrayChoice = true
-				p.arrayChoice = 1 // Default to "all items"
-			} else {
-				// Return directly
-				return p.SelectedPath(), nil
+			// Check if this is a field from an array - show value picker
+			if field.FromArray && field.Path != "" {
+				// Get the array data from the current nav level
+				if len(p.navStack) > 0 {
+					currentLevel := p.navStack[len(p.navStack)-1]
+					if currentLevel.isArray && currentLevel.arrayData != nil {
+						// Show values of this field across all array items
+						p.navStack = append(p.navStack, navLevel{
+							path:      "", // no additional path yet
+							isArray:   false,
+							fieldPath: field.Path,
+							selected:  p.Selected,
+						})
+						p.Fields = p.extractFieldValues(currentLevel.arrayData, field.Path)
+						p.Selected = 0
+						return "", nil
+					}
+				}
 			}
+
+			// Check if this field is an array we should drill into
+			// (but not "(entire array)" which has empty path - that's for selecting the current array)
+			if field.Type == "array" && !field.FromArray && field.Path != "" {
+				// Drill into the array - show fields from first item
+				arr, ok := field.Value.([]interface{})
+				if ok && len(arr) > 0 {
+					// Save current state to nav stack (including array data for later)
+					p.navStack = append(p.navStack, navLevel{
+						path:      field.Path,
+						isArray:   true,
+						arrayData: arr,
+						selected:  p.Selected,
+					})
+					// Extract fields from first item with FromArray=true
+					p.Fields = p.extractFromItem(arr[0], true)
+					// Sort and add "(entire array)" option
+					sort.Slice(p.Fields, func(i, j int) bool {
+						return p.Fields[i].Name < p.Fields[j].Name
+					})
+					entireArray := ExtractedField{
+						Name:     "(entire array)",
+						Path:     "", // empty means just the array itself
+						Value:    arr,
+						ValueStr: fmt.Sprintf("[%d items]", len(arr)),
+						Type:     "array",
+					}
+					p.Fields = append([]ExtractedField{entireArray}, p.Fields...)
+					p.Selected = 0
+					return "", nil
+				}
+			}
+
+			// Return the selected path
+			return p.SelectedPath(), nil
 
 		case "tab":
 			p.RawMode = true
@@ -445,10 +839,15 @@ func (p *FieldPicker) Update(msg tea.Msg) (selectedPath string, cmd tea.Cmd) {
 			}
 
 		case "esc":
-			if p.showArrayChoice {
-				p.showArrayChoice = false
-			} else if p.multiStep {
-				// Go back to step selection
+			if len(p.navStack) > 0 {
+				// Pop navigation stack and go back up
+				prev := p.navStack[len(p.navStack)-1]
+				p.navStack = p.navStack[:len(p.navStack)-1]
+				p.ItemsPath = p.currentNavPath()
+				p.extractFields() // Re-extract at current level
+				p.Selected = prev.selected
+			} else if p.multiStep && len(p.varNames) > 1 {
+				// Go back to step selection (only if there are multiple variables)
 				p.selectingStep = true
 				p.Selected = 0
 				p.Fields = nil
@@ -462,11 +861,48 @@ func (p *FieldPicker) Update(msg tea.Msg) (selectedPath string, cmd tea.Cmd) {
 }
 
 func (p *FieldPicker) handleStepSelection(msg tea.Msg) (string, tea.Cmd) {
+	// If awaiting test result, only handle esc
+	if p.awaitingTest {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "esc" {
+			p.awaitingTest = false
+			p.awaitingTestVar = ""
+			return "", func() tea.Msg { return FieldCancelledMsg{} }
+		}
+		return "", nil
+	}
+
+	// If we've selected a variable but it has no output, show test prompt
+	if p.awaitingTestVar != "" {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			debugLog(fmt.Sprintf("FieldPicker: awaitingTestVar=%s, key=%s", p.awaitingTestVar, msg.String()))
+			switch msg.String() {
+			case "t":
+				// Request test for this variable
+				debugLog(fmt.Sprintf("FieldPicker: [t] pressed, returning PickerNeedsTestMsg for %s", p.awaitingTestVar))
+				p.awaitingTest = true
+				p.testError = ""
+				return "", func() tea.Msg {
+					debugLog("FieldPicker: PickerNeedsTestMsg command executing")
+					return PickerNeedsTestMsg{VarName: p.awaitingTestVar}
+				}
+			case "enter":
+				// Select entire variable without drilling into fields
+				return "$" + p.awaitingTestVar, nil
+			case "esc":
+				// Go back to variable list
+				p.awaitingTestVar = ""
+				p.testError = ""
+			}
+		}
+		return "", nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "j", "down":
-			if p.selectedStepIdx < len(p.stepNames)-1 {
+			if p.selectedStepIdx < len(p.varNames)-1 {
 				p.selectedStepIdx++
 			}
 		case "k", "up":
@@ -474,15 +910,25 @@ func (p *FieldPicker) handleStepSelection(msg tea.Msg) (string, tea.Cmd) {
 				p.selectedStepIdx--
 			}
 		case "enter":
-			// Select this step and show its fields
-			stepName := p.stepNames[p.selectedStepIdx]
-			p.StepName = stepName
-			p.RawOutput = p.allSteps[stepName]
+			// Select this variable
+			varName := p.varNames[p.selectedStepIdx]
+			p.StepName = varName
+			p.RawOutput = p.allSteps[varName]
+
+			// Check if output is nil (not tested yet)
+			if p.RawOutput == nil {
+				p.awaitingTestVar = varName
+				return "", nil
+			}
+
+			// Has output - extract fields and continue
 			p.extractFields()
 			p.selectingStep = false
 			p.Selected = 0
 		case "esc":
-			return "", func() tea.Msg { return FieldCancelledMsg{} }
+			return "", func() tea.Msg {
+				return FieldCancelledMsg{}
+			}
 		}
 	}
 	return "", nil
@@ -583,6 +1029,15 @@ func (p *FieldPicker) buildRawPath(node *TreeNode) string {
 	return "$" + p.StepName + path
 }
 
+// currentNavPath returns the path built from the navigation stack.
+func (p *FieldPicker) currentNavPath() string {
+	var path string
+	for _, level := range p.navStack {
+		path += level.path
+	}
+	return path
+}
+
 // SelectedPath returns the full path for the selected field.
 func (p *FieldPicker) SelectedPath() string {
 	if p.Selected < 0 || p.Selected >= len(p.Fields) {
@@ -592,20 +1047,11 @@ func (p *FieldPicker) SelectedPath() string {
 }
 
 func (p *FieldPicker) buildFullPath(field ExtractedField) string {
-	var path string
-
-	if field.FromArray {
-		// $step.results[].field or $step.results[0].field
-		if p.arrayChoice == 0 {
-			path = "$" + p.StepName + p.ItemsPath + "[0]" + field.Path
-		} else {
-			path = "$" + p.StepName + p.ItemsPath + "[]" + field.Path
-		}
-	} else {
-		path = "$" + p.StepName + field.Path
-	}
-
-	return path
+	navPath := p.currentNavPath()
+	// Path is always: $stepName + navPath + field.Path
+	// navPath includes array indices from navigation (e.g., ".recipes[1]")
+	// field.Path is the field within the current level (e.g., ".name")
+	return "$" + p.StepName + navPath + field.Path
 }
 
 // View renders the field picker.
@@ -618,10 +1064,6 @@ func (p *FieldPicker) View() string {
 		return p.renderRawMode()
 	}
 
-	if p.showArrayChoice {
-		return p.renderArrayChoice()
-	}
-
 	return p.renderFieldList()
 }
 
@@ -629,20 +1071,56 @@ func (p *FieldPicker) renderStepSelection() string {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.Accent)
 	dimStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
 	selectedStyle := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
+	errorStyle := lipgloss.NewStyle().Foreground(theme.Error)
 
 	var lines []string
+
+	// If awaiting test result, show loading
+	if p.awaitingTest {
+		lines = append(lines, headerStyle.Render("Variable: $"+p.awaitingTestVar))
+		lines = append(lines, "")
+		lines = append(lines, "Fetching sample output...")
+		lines = append(lines, "")
+		lines = append(lines, dimStyle.Render("[Esc] Cancel"))
+		return strings.Join(lines, "\n")
+	}
+
+	// If showing "needs test" prompt for a selected variable
+	if p.awaitingTestVar != "" {
+		lines = append(lines, headerStyle.Render("Variable: $"+p.awaitingTestVar))
+		lines = append(lines, "")
+
+		if p.testError != "" {
+			lines = append(lines, errorStyle.Render("Error: "+p.testError))
+			lines = append(lines, "")
+		}
+
+		lines = append(lines, dimStyle.Render("No sample output available yet."))
+		lines = append(lines, "")
+		lines = append(lines, "Press [t] to fetch sample output and see available fields,")
+		lines = append(lines, "or [Enter] to use the entire variable.")
+		lines = append(lines, "")
+		lines = append(lines, dimStyle.Render("[t] Fetch output  [Enter] Use $"+p.awaitingTestVar+"  [Esc] Back"))
+		return strings.Join(lines, "\n")
+	}
 
 	lines = append(lines, headerStyle.Render("Select Variable"))
 	lines = append(lines, "")
 	lines = append(lines, dimStyle.Render("Choose a previous step's output:"))
 	lines = append(lines, "")
 
-	for i, name := range p.stepNames {
-		display := "$" + name
+	for i, varName := range p.varNames {
+		suffix := p.getStepNameSuffix(varName)
+
+		// Show indicator if not tested
+		if p.allSteps[varName] == nil {
+			suffix += dimStyle.Render("  (not tested)")
+		}
+
 		if i == p.selectedStepIdx {
-			lines = append(lines, selectedStyle.Render("> "+display))
+			lines = append(lines, selectedStyle.Render("> $"+varName)+suffix)
 		} else {
-			lines = append(lines, "  "+display)
+			lines = append(lines, "  $"+varName+suffix)
 		}
 	}
 
@@ -650,6 +1128,16 @@ func (p *FieldPicker) renderStepSelection() string {
 	lines = append(lines, dimStyle.Render("[j/k] Navigate  [Enter] Select  [Esc] Cancel"))
 
 	return strings.Join(lines, "\n")
+}
+
+// getStepNameSuffix returns the step name suffix for display.
+func (p *FieldPicker) getStepNameSuffix(varName string) string {
+	if p.varToStepName != nil {
+		if stepName, ok := p.varToStepName[varName]; ok && stepName != varName {
+			return "  (from " + stepName + ")"
+		}
+	}
+	return ""
 }
 
 func (p *FieldPicker) renderFieldList() string {
@@ -660,7 +1148,13 @@ func (p *FieldPicker) renderFieldList() string {
 
 	var lines []string
 
-	lines = append(lines, headerStyle.Render("Select field from: $"+p.StepName))
+	// Show current navigation path
+	navPath := p.currentNavPath()
+	if navPath != "" {
+		lines = append(lines, headerStyle.Render("Select field from: $"+p.StepName+navPath))
+	} else {
+		lines = append(lines, headerStyle.Render("Select field from: $"+p.StepName))
+	}
 	lines = append(lines, "")
 
 	if len(p.Fields) == 0 {
@@ -691,46 +1185,11 @@ func (p *FieldPicker) renderFieldList() string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, dimStyle.Render("[j/k] Navigate  [Enter] Select  [Tab] Raw view  [Esc] Cancel"))
-
-	return strings.Join(lines, "\n")
-}
-
-func (p *FieldPicker) renderArrayChoice() string {
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.Accent)
-	dimStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
-	selectedStyle := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
-
-	var lines []string
-
-	lines = append(lines, headerStyle.Render("This field is from an array"))
-	lines = append(lines, "")
-	lines = append(lines, "Apply to:")
-	lines = append(lines, "")
-
-	choices := []string{"First item only", "All items (map)"}
-	for i, choice := range choices {
-		if i == p.arrayChoice {
-			lines = append(lines, selectedStyle.Render("> "+choice))
-		} else {
-			lines = append(lines, "  "+choice)
-		}
-	}
-
-	lines = append(lines, "")
-
-	// Show resulting path
-	field := p.Fields[p.Selected]
-	var previewPath string
-	if p.arrayChoice == 0 {
-		previewPath = "$" + p.StepName + p.ItemsPath + "[0]" + field.Path
+	if len(p.navStack) > 0 {
+		lines = append(lines, dimStyle.Render("[j/k] Navigate  [Enter] Select  [Tab] Raw view  [Esc] Back"))
 	} else {
-		previewPath = "$" + p.StepName + p.ItemsPath + "[]" + field.Path
+		lines = append(lines, dimStyle.Render("[j/k] Navigate  [Enter] Select  [Tab] Raw view  [Esc] Cancel"))
 	}
-	lines = append(lines, dimStyle.Render("Path: "+previewPath))
-
-	lines = append(lines, "")
-	lines = append(lines, dimStyle.Render("[j/k] Navigate  [Enter] Select  [Esc] Back"))
 
 	return strings.Join(lines, "\n")
 }

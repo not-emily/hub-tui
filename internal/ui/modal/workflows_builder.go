@@ -20,18 +20,17 @@ const (
 	builderViewStepDetail
 	builderViewToolPicker
 	builderViewFieldPicker
-	builderViewTransformPicker
-	builderViewTransformForm
 	builderViewTriggerForm
 	builderViewValidation
 )
 
 // Focus field constants
 const (
-	focusName    = 0
-	focusOutput  = 1
-	focusTrigger = 2
-	focusSteps   = 3 // focusSteps + index for specific step; focusAddStep is after all steps
+	focusName      = 0
+	focusOutput    = 1
+	focusAttention = 2
+	focusTrigger   = 3
+	focusSteps     = 4 // focusSteps + index for specific step; focusAddStep is after all steps
 )
 
 // WorkflowBuilder handles creating and editing workflows.
@@ -43,11 +42,12 @@ type WorkflowBuilder struct {
 	OriginalName string
 
 	// Workflow data
-	Name        string
-	Description string
-	Trigger     client.TriggerConfig
-	Steps       []client.WorkflowStep
-	Output      string
+	Name                     string
+	Description              string
+	Trigger                  client.TriggerConfig
+	Steps                    []client.WorkflowStep
+	Output                   string
+	NeedsAttentionOnComplete bool
 
 	// Editing state
 	viewState     BuilderView
@@ -110,6 +110,7 @@ func (b *WorkflowBuilder) LoadWorkflow(wf *client.Workflow) {
 	b.Trigger = wf.Trigger
 	b.Steps = wf.Steps
 	b.Output = wf.Output
+	b.NeedsAttentionOnComplete = wf.NeedsAttentionOnComplete
 	b.IsNew = false
 	// For existing workflows, start focused on steps if any
 	if len(wf.Steps) > 0 {
@@ -135,6 +136,8 @@ type BuilderCloseMsg struct {
 
 // Update handles input for the builder.
 func (b *WorkflowBuilder) Update(msg tea.Msg) (*WorkflowBuilder, tea.Cmd) {
+	debugLog(fmt.Sprintf("WorkflowBuilder.Update: msg=%T, viewState=%v, stepForm=%v", msg, b.viewState, b.stepForm != nil))
+
 	// Handle async messages first (before view-specific routing)
 	switch msg := msg.(type) {
 	case BuilderToolsLoadedMsg:
@@ -184,6 +187,33 @@ func (b *WorkflowBuilder) Update(msg tea.Msg) (*WorkflowBuilder, tea.Cmd) {
 			if msg.Result != nil && msg.Result.Success && b.stepForm.Step.SaveAs != "" {
 				b.StepOutputs[b.stepForm.Step.SaveAs] = msg.Result.Output
 			}
+			return b, cmd
+		}
+		return b, nil
+
+	case TransformPreviewedMsg:
+		// Forward to step form (which delegates to transform form)
+		if b.stepForm != nil {
+			form, cmd := b.stepForm.Update(msg)
+			b.stepForm = form
+			return b, cmd
+		}
+		return b, nil
+
+	case PickerTestRequestedMsg:
+		// Field picker needs test output for a variable - find and test that step
+		debugLog(fmt.Sprintf("WorkflowBuilder: handling PickerTestRequestedMsg for %s", msg.VarName))
+		return b, b.testStepForPicker(msg.VarName)
+
+	case PickerTestCompletedMsg:
+		// Forward to step form which will forward to transform form
+		if b.stepForm != nil {
+			// Update our cache
+			if msg.Error == nil {
+				b.StepOutputs[msg.VarName] = msg.Output
+			}
+			form, cmd := b.stepForm.Update(msg)
+			b.stepForm = form
 			return b, cmd
 		}
 		return b, nil
@@ -314,6 +344,9 @@ func (b *WorkflowBuilder) handleKeyPress(msg tea.KeyMsg) (*WorkflowBuilder, tea.
 			b.editingOutput = true
 			b.outputOptions = b.buildOutputOptions()
 			b.outputIndex = b.findOutputIndex()
+		} else if b.focusedField == focusAttention {
+			b.NeedsAttentionOnComplete = !b.NeedsAttentionOnComplete
+			b.Dirty = true
 		} else if b.focusedField == focusTrigger {
 			b.scheduleForm = NewScheduleForm(b.client, b.Trigger)
 			b.viewState = builderViewTriggerForm
@@ -405,7 +438,7 @@ func (b *WorkflowBuilder) focusAddStep() int {
 }
 
 func (b *WorkflowBuilder) moveSelectionDown() {
-	maxField := b.focusAddStep() // Can go all the way to "+ Add step"
+	maxField := b.focusAddStep() // Can go to "+ Add step"
 
 	if b.focusedField < maxField {
 		b.focusedField++
@@ -547,6 +580,7 @@ func (b *WorkflowBuilder) openStepForm(isNew bool) tea.Cmd {
 	b.stepForm = NewStepForm(b.client, step, tool, toolType, isNew)
 	b.stepForm.SetAvailableVariables(b.AvailableVariables(b.SelectedStep))
 	b.stepForm.SetPreviousOutputs(b.buildPreviousOutputs(b.SelectedStep))
+	b.stepForm.SetVarToStepName(b.buildVarToStepName(b.SelectedStep))
 	b.viewState = builderViewStepDetail
 
 	// Clear pending tool
@@ -561,12 +595,87 @@ func (b *WorkflowBuilder) buildPreviousOutputs(beforeIndex int) map[string]inter
 	outputs := make(map[string]interface{})
 	for i := 0; i < beforeIndex && i < len(b.Steps); i++ {
 		if b.Steps[i].SaveAs != "" {
+			// Use test output if available, otherwise use nil placeholder
+			// This allows variable picker to show variables even without test output
 			if output, ok := b.StepOutputs[b.Steps[i].SaveAs]; ok {
 				outputs[b.Steps[i].SaveAs] = output
+			} else {
+				outputs[b.Steps[i].SaveAs] = nil
 			}
 		}
 	}
 	return outputs
+}
+
+// buildVarToStepName returns a mapping from variable names to step names.
+func (b *WorkflowBuilder) buildVarToStepName(beforeIndex int) map[string]string {
+	mapping := make(map[string]string)
+	for i := 0; i < beforeIndex && i < len(b.Steps); i++ {
+		if b.Steps[i].SaveAs != "" {
+			mapping[b.Steps[i].SaveAs] = b.Steps[i].Name
+		}
+	}
+	return mapping
+}
+
+// testStepForPicker runs a test for a step to get output for the field picker.
+func (b *WorkflowBuilder) testStepForPicker(varName string) tea.Cmd {
+	// Find the step with this SaveAs
+	var step *client.WorkflowStep
+	for i := range b.Steps {
+		if b.Steps[i].SaveAs == varName {
+			step = &b.Steps[i]
+			break
+		}
+	}
+
+	if step == nil {
+		return func() tea.Msg {
+			return PickerTestCompletedMsg{
+				VarName: varName,
+				Error:   fmt.Errorf("step not found for variable $%s", varName),
+			}
+		}
+	}
+
+	// Build variables map from outputs of steps before this one
+	variables := make(map[string]interface{})
+	for i := range b.Steps {
+		if b.Steps[i].SaveAs == varName {
+			break // Stop at the step we're testing
+		}
+		if b.Steps[i].SaveAs != "" {
+			if output, ok := b.StepOutputs[b.Steps[i].SaveAs]; ok {
+				variables[b.Steps[i].SaveAs] = output
+			}
+		}
+	}
+
+	return func() tea.Msg {
+		result, err := b.client.TestStep(&client.StepTestRequest{
+			Step:      *step,
+			Variables: variables,
+		})
+
+		if err != nil {
+			return PickerTestCompletedMsg{
+				VarName: varName,
+				Error:   err,
+			}
+		}
+
+		if !result.Success {
+			return PickerTestCompletedMsg{
+				VarName: varName,
+				Error:   fmt.Errorf("%s", result.Error),
+			}
+		}
+
+		return PickerTestCompletedMsg{
+			VarName: varName,
+			Output:  result.Output,
+		}
+	}
 }
 
 // findTool looks up a tool by target in the cached tools.
@@ -662,12 +771,13 @@ func (b *WorkflowBuilder) doSave() tea.Cmd {
 // ToWorkflow converts the builder state to a Workflow.
 func (b *WorkflowBuilder) ToWorkflow() *client.Workflow {
 	return &client.Workflow{
-		Name:        b.Name,
-		Description: b.Description,
-		Trigger:     b.Trigger,
-		Steps:       b.Steps,
-		Output:      b.Output,
-		Enabled:     true,
+		Name:                     b.Name,
+		Description:              b.Description,
+		Trigger:                  b.Trigger,
+		Steps:                    b.Steps,
+		Output:                   b.Output,
+		NeedsAttentionOnComplete: b.NeedsAttentionOnComplete,
+		Enabled:                  true,
 	}
 }
 
@@ -797,6 +907,18 @@ func (b *WorkflowBuilder) renderStepList() string {
 		} else {
 			lines = append(lines, labelStyle.Render(outputLabel)+outputValue)
 		}
+	}
+
+	// Attention toggle field
+	attentionLabel := "Notify:  "
+	attentionValue := "No"
+	if b.NeedsAttentionOnComplete {
+		attentionValue = "Yes"
+	}
+	if b.focusedField == focusAttention {
+		lines = append(lines, labelStyle.Render(attentionLabel)+selectedStyle.Render(attentionValue)+" "+dimStyle.Render("[Enter to toggle]"))
+	} else {
+		lines = append(lines, labelStyle.Render(attentionLabel)+attentionValue)
 	}
 
 	// Trigger field (focusable)

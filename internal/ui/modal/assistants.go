@@ -125,11 +125,17 @@ type AssistantsLoadedMsg struct {
 	Error      error
 }
 
+func (m AssistantsLoadedMsg) IsAsyncModalMessage() {}
+func (m AssistantsLoadedMsg) AuthError() error     { return m.Error }
+
 // AssistantDetailMsg is sent when a single assistant is loaded.
 type AssistantDetailMsg struct {
 	Assistant *client.Assistant
 	Error     error
 }
+
+func (m AssistantDetailMsg) IsAsyncModalMessage() {}
+func (m AssistantDetailMsg) AuthError() error     { return m.Error }
 
 // AssistantFormDataMsg is sent when form data (profiles + modules) is loaded.
 type AssistantFormDataMsg struct {
@@ -138,11 +144,17 @@ type AssistantFormDataMsg struct {
 	Error    error
 }
 
+func (m AssistantFormDataMsg) IsAsyncModalMessage() {}
+func (m AssistantFormDataMsg) AuthError() error     { return m.Error }
+
 // AssistantCreatedMsg is sent when an assistant is created.
 type AssistantCreatedMsg struct {
 	Assistant *client.Assistant
 	Error     error
 }
+
+func (m AssistantCreatedMsg) IsAsyncModalMessage() {}
+func (m AssistantCreatedMsg) AuthError() error     { return m.Error }
 
 // AssistantUpdatedMsg is sent when an assistant is updated.
 type AssistantUpdatedMsg struct {
@@ -150,11 +162,17 @@ type AssistantUpdatedMsg struct {
 	Error     error
 }
 
+func (m AssistantUpdatedMsg) IsAsyncModalMessage() {}
+func (m AssistantUpdatedMsg) AuthError() error     { return m.Error }
+
 // AssistantDeletedMsg is sent when an assistant is deleted.
 type AssistantDeletedMsg struct {
 	Name  string
 	Error error
 }
+
+func (m AssistantDeletedMsg) IsAsyncModalMessage() {}
+func (m AssistantDeletedMsg) AuthError() error     { return m.Error }
 
 // AssistantHistoryClearedMsg is sent when history is cleared.
 type AssistantHistoryClearedMsg struct {
@@ -162,16 +180,25 @@ type AssistantHistoryClearedMsg struct {
 	Error error
 }
 
+func (m AssistantHistoryClearedMsg) IsAsyncModalMessage() {}
+func (m AssistantHistoryClearedMsg) AuthError() error     { return m.Error }
+
 // AssistantMemoryLoadedMsg is sent when memory is loaded.
 type AssistantMemoryLoadedMsg struct {
 	Memory *client.AssistantMemory
 	Error  error
 }
 
+func (m AssistantMemoryLoadedMsg) IsAsyncModalMessage() {}
+func (m AssistantMemoryLoadedMsg) AuthError() error     { return m.Error }
+
 // AssistantMemorySavedMsg is sent when memory is saved.
 type AssistantMemorySavedMsg struct {
 	Error error
 }
+
+func (m AssistantMemorySavedMsg) IsAsyncModalMessage() {}
+func (m AssistantMemorySavedMsg) AuthError() error     { return m.Error }
 
 // AssistantTemplatesLoadedMsg is sent when templates are loaded.
 type AssistantTemplatesLoadedMsg struct {
@@ -179,11 +206,17 @@ type AssistantTemplatesLoadedMsg struct {
 	Error     error
 }
 
+func (m AssistantTemplatesLoadedMsg) IsAsyncModalMessage() {}
+func (m AssistantTemplatesLoadedMsg) AuthError() error     { return m.Error }
+
 // AssistantTemplateCreatedMsg is sent when an assistant is created from template.
 type AssistantTemplateCreatedMsg struct {
 	Assistant *client.Assistant
 	Error     error
 }
+
+func (m AssistantTemplateCreatedMsg) IsAsyncModalMessage() {}
+func (m AssistantTemplateCreatedMsg) AuthError() error     { return m.Error }
 
 // Init initializes the modal and triggers data fetch.
 func (m *AssistantsModal) Init() tea.Cmd {

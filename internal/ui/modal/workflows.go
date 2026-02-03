@@ -51,17 +51,26 @@ type WorkflowsLoadedMsg struct {
 	Error     error
 }
 
+func (m WorkflowsLoadedMsg) IsAsyncModalMessage() {}
+func (m WorkflowsLoadedMsg) AuthError() error     { return m.Error }
+
 // WorkflowLoadedMsg is sent when a single workflow is loaded for editing.
 type WorkflowLoadedMsg struct {
 	Workflow *client.Workflow
 	Error    error
 }
 
+func (m WorkflowLoadedMsg) IsAsyncModalMessage() {}
+func (m WorkflowLoadedMsg) AuthError() error     { return m.Error }
+
 // WorkflowDeletedMsg is sent when a workflow is deleted.
 type WorkflowDeletedMsg struct {
 	Name  string
 	Error error
 }
+
+func (m WorkflowDeletedMsg) IsAsyncModalMessage() {}
+func (m WorkflowDeletedMsg) AuthError() error     { return m.Error }
 
 // WorkflowSavedMsg is sent when a workflow is saved.
 type WorkflowSavedMsg struct {
@@ -70,11 +79,17 @@ type WorkflowSavedMsg struct {
 	Error error
 }
 
+func (m WorkflowSavedMsg) IsAsyncModalMessage() {}
+func (m WorkflowSavedMsg) AuthError() error     { return m.Error }
+
 // WorkflowRunMsg is sent when a workflow run is initiated.
 type WorkflowRunMsg struct {
 	Name  string
 	Error error
 }
+
+func (m WorkflowRunMsg) IsAsyncModalMessage() {}
+func (m WorkflowRunMsg) AuthError() error     { return m.Error }
 
 // Init initializes the modal and triggers data fetch.
 func (m *WorkflowsModal) Init() tea.Cmd {
@@ -104,6 +119,8 @@ func (m *WorkflowsModal) deleteWorkflow(name string) tea.Cmd {
 
 // Update handles input.
 func (m *WorkflowsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
+	debugLog(fmt.Sprintf("WorkflowsModal.Update: msg=%T, view=%v", msg, m.view))
+
 	// Handle messages regardless of view
 	switch msg := msg.(type) {
 	case components.ConfirmationExpiredMsg:
@@ -231,12 +248,14 @@ func (m *WorkflowsModal) updateList(msg tea.Msg) (Modal, tea.Cmd) {
 }
 
 func (m *WorkflowsModal) updateBuilder(msg tea.Msg) (Modal, tea.Cmd) {
+	debugLog(fmt.Sprintf("WorkflowsModal.updateBuilder: msg=%T, builder=%v", msg, m.builder != nil))
 	if m.builder == nil {
 		m.view = wfViewList
 		return m, nil
 	}
 
 	builder, cmd := m.builder.Update(msg)
+	debugLog(fmt.Sprintf("WorkflowsModal.updateBuilder: after builder.Update, builder=%v, cmd=%v", builder != nil, cmd != nil))
 	if builder == nil {
 		// Builder closed
 		m.builder = nil

@@ -133,11 +133,17 @@ type IntegrationsLoadedMsg struct {
 	Error        error
 }
 
+func (m IntegrationsLoadedMsg) IsAsyncModalMessage() {}
+func (m IntegrationsLoadedMsg) AuthError() error     { return m.Error }
+
 // IntegrationConfiguredMsg is sent when an integration is configured.
 type IntegrationConfiguredMsg struct {
 	Name  string
 	Error error
 }
+
+func (m IntegrationConfiguredMsg) IsAsyncModalMessage() {}
+func (m IntegrationConfiguredMsg) AuthError() error     { return m.Error }
 
 // IntegrationTestedMsg is sent when an integration is tested.
 type IntegrationTestedMsg struct {
@@ -145,11 +151,17 @@ type IntegrationTestedMsg struct {
 	Error error
 }
 
+func (m IntegrationTestedMsg) IsAsyncModalMessage() {}
+func (m IntegrationTestedMsg) AuthError() error     { return m.Error }
+
 // DependenciesLoadedMsg is sent when dependencies are loaded.
 type DependenciesLoadedMsg struct {
 	Dependencies []client.Dependency
 	Err          error
 }
+
+func (m DependenciesLoadedMsg) IsAsyncModalMessage() {}
+func (m DependenciesLoadedMsg) AuthError() error     { return m.Err }
 
 // DependencyInstalledMsg is sent when a dependency is installed.
 type DependencyInstalledMsg struct {
@@ -158,6 +170,9 @@ type DependencyInstalledMsg struct {
 	Err    error
 }
 
+func (m DependencyInstalledMsg) IsAsyncModalMessage() {}
+func (m DependencyInstalledMsg) AuthError() error     { return m.Err }
+
 // DependencyCheckMsg is sent after checking dependencies for an integration.
 type DependencyCheckMsg struct {
 	Integration  string
@@ -165,11 +180,17 @@ type DependencyCheckMsg struct {
 	Err          error
 }
 
+func (m DependencyCheckMsg) IsAsyncModalMessage() {}
+func (m DependencyCheckMsg) AuthError() error     { return m.Err }
+
 // HubUpdatesLoadedMsg is sent when hub update info is loaded.
 type HubUpdatesLoadedMsg struct {
 	UpdateInfo *client.HubUpdateInfo
 	Err        error
 }
+
+func (m HubUpdatesLoadedMsg) IsAsyncModalMessage() {}
+func (m HubUpdatesLoadedMsg) AuthError() error     { return m.Err }
 
 // HubUpdateAppliedMsg is sent when hub update is applied.
 type HubUpdateAppliedMsg struct {
@@ -178,8 +199,14 @@ type HubUpdateAppliedMsg struct {
 	Err     error
 }
 
+func (m HubUpdateAppliedMsg) IsAsyncModalMessage() {}
+func (m HubUpdateAppliedMsg) AuthError() error     { return m.Err }
+
 // HubUpdateConfirmExpiredMsg is sent when the update confirmation times out.
 type HubUpdateConfirmExpiredMsg struct{}
+
+func (m HubUpdateConfirmExpiredMsg) IsAsyncModalMessage() {}
+func (m HubUpdateConfirmExpiredMsg) AuthError() error     { return nil }
 
 // Init initializes the modal and triggers data fetch.
 func (m *IntegrationsModal) Init() tea.Cmd {

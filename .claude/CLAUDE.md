@@ -36,6 +36,9 @@ The TUI runs on the user's local machine and connects to a remote hub-core insta
 - `internal/client/` — HTTP client for hub-core API
 - `internal/config/` — config loading/saving
 
+## Async Modal Messages
+New API call messages from modals must implement `AsyncModalMessage` (see `internal/ui/modal/async_message.go`). This ensures automatic routing and auth error handling.
+
 ## Helper Scripts
 Scripts in `scripts/` are reusable helpers. **Before writing repetitive bash commands:**
 1. Check if a script already exists in `scripts/`

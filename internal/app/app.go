@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +16,16 @@ import (
 	"github.com/pxp/hub-tui/internal/ui/modal"
 	"github.com/pxp/hub-tui/internal/ui/status"
 )
+
+func debugLog(msg string) {
+	// Debug logging disabled - uncomment to enable
+	// f, _ := os.OpenFile("debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	// if f != nil {
+	// 	f.WriteString(msg + "\n")
+	// 	f.Close()
+	// }
+	_ = msg
+}
 
 const quitHintDuration = 2 * time.Second
 
@@ -254,437 +265,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AuthExpiredMsg:
 		return m.handleAuthExpired()
 
-	case modal.ModulesLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
+	// Component messages (from components package, not modal)
+	case components.TreeCancelledMsg, components.ConfirmationExpiredMsg, components.PickerNeedsTestMsg, components.PickerTestResultMsg, components.FieldCancelledMsg:
+		debugLog(fmt.Sprintf("app.Update: received component message %T, modal.IsOpen=%v", msg, m.modal.IsOpen()))
 		if m.modal.IsOpen() {
+			debugLog("app.Update: forwarding to modal.UpdateMsg")
 			_, cmd := m.modal.UpdateMsg(msg)
 			return m, cmd
 		}
 
-	case modal.ModuleToggledMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.AvailableModulesLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.ModuleInstalledMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.ModuleUninstallResultMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.ModuleUninstalledMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.ModuleUpdatedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.AssistantsLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.AssistantDetailMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.AssistantFormDataMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.AssistantCreatedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.AssistantUpdatedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.AssistantDeletedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.AssistantHistoryClearedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.AssistantMemoryLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.AssistantMemorySavedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.AssistantTemplatesLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.AssistantTemplateCreatedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.WorkflowsLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.WorkflowLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.WorkflowDeletedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.WorkflowSavedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.SchedulePreviewedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.BuilderToolsLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case components.TreeCancelledMsg:
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.StepProfilesLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.StepTestedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.IntegrationsLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.IntegrationConfiguredMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.IntegrationTestedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMDataLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.DependenciesLoadedMsg:
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.DependencyInstalledMsg:
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.DependencyCheckMsg:
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.HubUpdatesLoadedMsg:
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.HubUpdateAppliedMsg:
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.HubUpdateConfirmExpiredMsg:
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMAvailableProvidersMsg:
-		if msg.Err != nil && client.IsAuthError(msg.Err) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMProviderFieldsMsg:
-		if msg.Err != nil && client.IsAuthError(msg.Err) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMProviderSavedMsg:
-		if msg.Err != nil && client.IsAuthError(msg.Err) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMProviderDeletedMsg:
-		if msg.Err != nil && client.IsAuthError(msg.Err) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMErrorMsg:
-		if msg.Err != nil && client.IsAuthError(msg.Err) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMModelsLoadedMsg:
-		if msg.Err != nil && client.IsAuthError(msg.Err) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMProfileSavedMsg:
-		if msg.Err != nil && client.IsAuthError(msg.Err) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMProfileDeletedMsg:
-		if msg.Err != nil && client.IsAuthError(msg.Err) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMProfileTestedMsg:
-		if msg.Err != nil && client.IsAuthError(msg.Err) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.LLMProfileDefaultSetMsg:
-		if msg.Err != nil && client.IsAuthError(msg.Err) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.TasksLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.TaskDetailLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
-	case modal.HistoryLoadedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
-			return m.handleAuthExpired()
-		}
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
-
+	// TaskDismissedMsg has extra logic beyond forwarding
 	case modal.TaskDismissedMsg:
-		if msg.Error != nil && client.IsAuthError(msg.Error) {
+		if modal.IsAuthError(msg.AuthError()) {
 			return m.handleAuthExpired()
 		}
 		var cmds []tea.Cmd
@@ -697,12 +289,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.doFetchTaskStatus())
 		}
 		return m, tea.Batch(cmds...)
-
-	case components.ConfirmationExpiredMsg:
-		if m.modal.IsOpen() {
-			_, cmd := m.modal.UpdateMsg(msg)
-			return m, cmd
-		}
 
 	case modal.SettingsSavedMsg:
 		if msg.Error == nil && msg.Config != nil {
@@ -767,6 +353,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case WorkflowHintExpiredMsg:
 		return m.handleWorkflowHintExpired(msg)
+
+	default:
+		// Handle all AsyncModalMessage types generically.
+		// This catches any modal async message that implements the interface,
+		// checking for auth errors and forwarding to the modal.
+		if asyncMsg, ok := msg.(modal.AsyncModalMessage); ok {
+			if modal.IsAuthError(asyncMsg.AuthError()) {
+				return m.handleAuthExpired()
+			}
+			if m.modal.IsOpen() {
+				_, cmd := m.modal.UpdateMsg(msg)
+				return m, cmd
+			}
+		}
 	}
 
 	return m, nil

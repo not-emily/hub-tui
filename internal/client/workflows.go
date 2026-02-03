@@ -28,14 +28,76 @@ type WorkflowStep struct {
 
 // Workflow represents a workflow from hub-core.
 type Workflow struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Trigger     TriggerConfig  `json:"trigger"`
-	Steps       []WorkflowStep `json:"steps,omitempty"`
-	Output      string         `json:"output,omitempty"`   // output variable reference
-	Enabled     bool           `json:"enabled"`
-	NextRun     *time.Time     `json:"next_run,omitempty"`  // only for scheduled workflows
-	Frequency   string         `json:"frequency,omitempty"` // human-readable schedule from API
+	Name                     string         `json:"name"`
+	Description              string         `json:"description"`
+	Trigger                  TriggerConfig  `json:"trigger"`
+	Steps                    []WorkflowStep `json:"steps,omitempty"`
+	Output                   string         `json:"output,omitempty"`                      // output variable reference
+	NeedsAttentionOnComplete bool           `json:"needs_attention_on_complete,omitempty"` // if true, completed runs require attention
+	Enabled                  bool           `json:"enabled"`
+	NextRun                  *time.Time     `json:"next_run,omitempty"`                    // only for scheduled workflows
+	Frequency                string         `json:"frequency,omitempty"`                   // human-readable schedule from API
+}
+
+// workflowRequest is the request body for create/update workflow API.
+// This only includes fields the API accepts per the OpenAPI spec.
+type workflowRequest struct {
+	Name                     string            `json:"name"`
+	Description              string            `json:"description,omitempty"`
+	Trigger                  TriggerConfig     `json:"trigger"`
+	Steps                    []workflowStepReq `json:"steps"`
+	Output                   string            `json:"output,omitempty"`
+	NeedsAttentionOnComplete bool              `json:"needs_attention_on_complete,omitempty"`
+}
+
+// workflowStepReq is a step in the API request format.
+// Maps internal types to API-accepted types.
+type workflowStepReq struct {
+	Name    string                 `json:"name"`
+	Type    string                 `json:"type"`              // "module", "utility", "llm"
+	Target  string                 `json:"target,omitempty"`
+	Profile string                 `json:"profile,omitempty"`
+	Params  map[string]interface{} `json:"params,omitempty"`
+	SaveAs  string                 `json:"save_as,omitempty"`
+}
+
+// toRequest converts a Workflow to the API request format.
+func (wf *Workflow) toRequest() *workflowRequest {
+	steps := make([]workflowStepReq, len(wf.Steps))
+	for i, s := range wf.Steps {
+		steps[i] = workflowStepReq{
+			Name:    s.Name,
+			Type:    mapStepType(s.Type),
+			Target:  s.Target,
+			Profile: s.Profile,
+			Params:  s.Params,
+			SaveAs:  s.SaveAs,
+		}
+	}
+	return &workflowRequest{
+		Name:                     wf.Name,
+		Description:              wf.Description,
+		Trigger:                  wf.Trigger,
+		Steps:                    steps,
+		Output:                   wf.Output,
+		NeedsAttentionOnComplete: wf.NeedsAttentionOnComplete,
+	}
+}
+
+// mapStepType converts internal step types to API-accepted types.
+func mapStepType(t string) string {
+	switch t {
+	case "integration":
+		// Integrations are treated as modules by the API
+		return "module"
+	case "primitive":
+		// Primitives are treated as utilities by the API
+		return "utility"
+	case "module", "utility", "llm":
+		return t
+	default:
+		return "module"
+	}
 }
 
 // workflowsResponse is the API response wrapper for listing workflows.
@@ -85,7 +147,8 @@ func (c *Client) GetWorkflow(name string) (*Workflow, error) {
 
 // CreateWorkflow creates a new workflow.
 func (c *Client) CreateWorkflow(wf *Workflow) error {
-	body, err := json.Marshal(wf)
+	req := wf.toRequest()
+	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("failed to encode workflow: %w", err)
 	}
@@ -105,7 +168,8 @@ func (c *Client) CreateWorkflow(wf *Workflow) error {
 
 // UpdateWorkflow updates an existing workflow.
 func (c *Client) UpdateWorkflow(name string, wf *Workflow) error {
-	body, err := json.Marshal(wf)
+	req := wf.toRequest()
+	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("failed to encode workflow: %w", err)
 	}
@@ -157,6 +221,9 @@ type ToolParam struct {
 	Required    bool        `json:"required"`
 	Description string      `json:"description,omitempty"`
 	Default     interface{} `json:"default,omitempty"`
+	Example     interface{} `json:"example,omitempty"`    // Sample value showing expected format
+	Properties  []ToolParam `json:"properties,omitempty"` // Nested params for object types
+	Items       *ToolParam  `json:"items,omitempty"`      // Element schema for array types
 }
 
 // ToolsResponse is the response from GET /workflows/builder/tools.

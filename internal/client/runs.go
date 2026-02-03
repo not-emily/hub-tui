@@ -24,7 +24,7 @@ type Run struct {
 type RunResult struct {
 	WorkflowName string       `json:"workflow_name"`
 	Success      bool         `json:"success"`
-	Output       string       `json:"output,omitempty"`
+	Output       interface{}  `json:"output,omitempty"`
 	Steps        []StepResult `json:"steps"`
 	Error        string       `json:"error,omitempty"`
 }

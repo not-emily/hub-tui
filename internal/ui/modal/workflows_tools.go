@@ -18,6 +18,9 @@ type BuilderToolsLoadedMsg struct {
 	Error error
 }
 
+func (m BuilderToolsLoadedMsg) IsAsyncModalMessage() {}
+func (m BuilderToolsLoadedMsg) AuthError() error     { return m.Error }
+
 // ToolSelectedMsg is sent when a tool is selected.
 type ToolSelectedMsg struct {
 	Tool client.Tool

@@ -120,7 +120,7 @@ type Run struct {
 type RunResult struct {
 	WorkflowName string
 	Success      bool
-	Output       string
+	Output       interface{}
 	Steps        []StepResult
 	Error        string
 }
