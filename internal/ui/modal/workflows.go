@@ -91,6 +91,16 @@ type WorkflowRunMsg struct {
 func (m WorkflowRunMsg) IsAsyncModalMessage() {}
 func (m WorkflowRunMsg) AuthError() error     { return m.Error }
 
+// WorkflowValidatedMsg is sent when workflow validation completes.
+type WorkflowValidatedMsg struct {
+	Valid  bool
+	Errors []client.ValidationError
+	Error  error // network/API error
+}
+
+func (m WorkflowValidatedMsg) IsAsyncModalMessage() {}
+func (m WorkflowValidatedMsg) AuthError() error     { return m.Error }
+
 // Init initializes the modal and triggers data fetch.
 func (m *WorkflowsModal) Init() tea.Cmd {
 	return m.loadWorkflows()
@@ -169,7 +179,14 @@ func (m *WorkflowsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	case WorkflowSavedMsg:
 		m.loading = false
 		if msg.Error != nil {
-			m.error = msg.Error.Error()
+			// Pass error to builder so it can display it
+			if m.builder != nil {
+				m.builder.Error = msg.Error.Error()
+				m.builder.Loading = false
+				m.builder.viewState = builderViewList // Go back to list view to show error
+			} else {
+				m.error = msg.Error.Error()
+			}
 		} else {
 			m.error = ""
 			m.builder = nil

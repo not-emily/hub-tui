@@ -1,57 +1,41 @@
 # Project Progress - hub-tui
 
 ## Plan Files
-Roadmap: [v9-workflow-builder](../docs/plan/plan.md)
-Current Phase: [Phase 8: Transform Forms](../docs/plan/phases/phase-8.md)
+Roadmap: None
+Current Phase: None
 Latest Weekly Report: [weekly-2026-W05.md](../docs/reports/weekly-2026-W05.md)
-Archived: [v1-initial-build](../docs/plan/_archived/v1-initial-build/), [v2-llm-profiles](../docs/plan/_archived/v2-llm-profiles/), [v3-param-collection](../docs/plan/_archived/v3-param-collection/), [v4-config-types](../docs/plan/_archived/v4-config-types/), [v5-dynamic-provider-fields](../docs/plan/_archived/v5-dynamic-provider-fields/), [v6-dependency-management](../docs/plan/_archived/v6-dependency-management/), [v7-assistant-crud](../docs/plan/_archived/v7-assistant-crud/), [v8-module-registry](../docs/plan/_archived/v8-module-registry/)
+Archived: [v1-initial-build](../docs/plan/_archived/v1-initial-build/), [v2-llm-profiles](../docs/plan/_archived/v2-llm-profiles/), [v3-param-collection](../docs/plan/_archived/v3-param-collection/), [v4-config-types](../docs/plan/_archived/v4-config-types/), [v5-dynamic-provider-fields](../docs/plan/_archived/v5-dynamic-provider-fields/), [v6-dependency-management](../docs/plan/_archived/v6-dependency-management/), [v7-assistant-crud](../docs/plan/_archived/v7-assistant-crud/), [v8-module-registry](../docs/plan/_archived/v8-module-registry/), [v9-workflow-builder](../docs/plan/_archived/v9-workflow-builder/)
 
-Last Updated: 2026-02-03
+Last Updated: 2026-02-05
 
 ## Current Focus
-v9-workflow-builder: Visual workflow builder for creating automations without writing JSON
+v9-workflow-builder plan complete — all 9 phases implemented and tested.
 
 ## Active Tasks
-- [COMPLETE] Phase 8: Transform Forms
-  - ✓ Transform operation picker (Filter, Extract, Sort, First, Last, Count)
-  - ✓ Filter form with field/operator/value
-  - ✓ Extract form with field mappings
-  - ✓ Sort form with direction toggle
-  - ✓ First/Last/Count forms
-  - ✓ Transform preview API integration
-  - ✓ Step insertion into workflow
-  - ✓ Variable picker [v] with field extraction
-  - ✓ Test on demand [t] for variables without cached output
-  - ✓ Bug fixes:
-    - ✓ Workflow save 400 error (step type mapping: integration→module, primitive→utility)
-    - ✓ [Esc] on Select Variable page (missing FieldCancelledMsg routing in app.go)
-    - ✓ [t] test stuck on regular steps (missing PickerNeedsTestMsg handler in StepForm)
-    - ✓ /tasks modal JSON unmarshal error (RunResult.Output: string→interface{})
-  - ✓ Clean up debug logging (disabled logging to debug.log)
-  - ✓ `needs_attention_on_complete` workflow toggle (Notify: Yes/No)
-- [NEXT] Phase 9: Validation & Polish
+None
 
 ## Open Questions/Blockers
 None
 
 ## Completed This Week
-- Nested object params with `properties` render as nested form fields
-- Array params with `items` render as dynamic list with add/remove
-- Example values shown as hints in param descriptions
-- Objects/arrays without schema fall back to JSON editor (unchanged)
-- Variable picker UX improvements:
-  - Always shows variable list first (even with 1 variable)
-  - "(entire variable)" option at top of field list
-  - Step name shown as description for each variable
-- AsyncModalMessage interface pattern for automatic async message routing
-  - Replaces ~80 individual message handlers in app.go
-  - Ensures auth error handling on all async responses
-  - Documented in .claude/CLAUDE.md
-- Transform form bug fixes:
-  - FieldPicker now properly updates view after successful [t] test
-  - Ctrl+S in transform form now correctly saves and returns to step list
-- `needs_attention_on_complete` toggle added to workflow builder
-- Debug logging cleanup (functions made no-ops, unused os imports removed)
+- Phase 9: Validation & Polish
+  - [v] keybinding to validate workflow via API (dry_run on create/update endpoints)
+  - Validation view showing success or grouped errors (by workflow/step)
+  - Validate-before-save: blocks save if invalid, auto-saves if valid
+  - Dirty state confirmation on close (y to discard, n to cancel, s to save)
+  - Variable color coding: green for tested, yellow(?) for untested
+  - Step error indicators in list view (! for steps with validation errors)
+  - Help overlay with [?] showing all keyboard shortcuts
+  - Workflow name field read-only for existing workflows (name is API identifier)
+  - Removed unnecessary client-side step type mapping (types pass through from API)
+  - Fixed 400 errors not displaying in builder (route errors from modal to builder)
+  - End-to-end testing complete
+- Phase 8 (previous session):
+  - Transform forms, field picker navigation, async message pattern
+
+## hub-core issues found during testing
+- Variable parser doesn't support hyphens in variable names ($recipes-mod parsed as $recipes)
+- "operation" field required for integration steps but not surfaced in builder tools API
 
 ## Future Enhancements (not in current plan)
 - oauth config type (requires browser redirect flow)
@@ -61,5 +45,5 @@ None
 - Refactor all text fields to use "[Enter to edit]" / "[Enter to confirm]" pattern (like workflow name field)
 
 ## Next Session
-- Phase 9: Validation & Polish
-- Archive v9-workflow-builder plan when complete
+- Archive v9-workflow-builder plan
+- Consider next project/plan direction

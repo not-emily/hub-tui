@@ -1125,10 +1125,9 @@ func (f *StepForm) View() string {
 	}
 	lines = append(lines, "")
 
-	// Available variables
+	// Available variables with color coding
 	if len(f.availableVars) > 0 {
-		vars := strings.Join(f.availableVars, ", ")
-		lines = append(lines, dimStyle.Render("Available: "+vars))
+		lines = append(lines, f.renderAvailableVariables(dimStyle))
 		lines = append(lines, "")
 	}
 
@@ -1469,4 +1468,38 @@ func (f *StepForm) renderHints(dimStyle lipgloss.Style) string {
 	hints += "  [Ctrl+s] Save  [Esc] Back"
 
 	return dimStyle.Render(hints)
+}
+
+// renderAvailableVariables renders available variables with color coding.
+// Green = tested (has output), Yellow = not yet tested.
+func (f *StepForm) renderAvailableVariables(dimStyle lipgloss.Style) string {
+	if len(f.availableVars) == 0 {
+		return dimStyle.Render("No variables available yet")
+	}
+
+	successStyle := lipgloss.NewStyle().Foreground(theme.Success)
+	warningStyle := lipgloss.NewStyle().Foreground(theme.Warning)
+
+	var parts []string
+	for _, v := range f.availableVars {
+		// Check if this variable has test output
+		varName := strings.TrimPrefix(v, "$")
+		if f.isVariableTested(varName) {
+			parts = append(parts, successStyle.Render(v))
+		} else {
+			parts = append(parts, warningStyle.Render(v+"(?)"))
+		}
+	}
+
+	return dimStyle.Render("Available: ") + strings.Join(parts, ", ")
+}
+
+// isVariableTested returns true if we have test output for this variable.
+func (f *StepForm) isVariableTested(varName string) bool {
+	if f.previousOutputs == nil {
+		return false
+	}
+	output, exists := f.previousOutputs[varName]
+	// Check that output exists AND is not nil (nil means placeholder without actual test output)
+	return exists && output != nil
 }

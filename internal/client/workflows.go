@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 )
 
@@ -67,7 +68,7 @@ func (wf *Workflow) toRequest() *workflowRequest {
 	for i, s := range wf.Steps {
 		steps[i] = workflowStepReq{
 			Name:    s.Name,
-			Type:    mapStepType(s.Type),
+			Type:    s.Type,
 			Target:  s.Target,
 			Profile: s.Profile,
 			Params:  s.Params,
@@ -81,22 +82,6 @@ func (wf *Workflow) toRequest() *workflowRequest {
 		Steps:                    steps,
 		Output:                   wf.Output,
 		NeedsAttentionOnComplete: wf.NeedsAttentionOnComplete,
-	}
-}
-
-// mapStepType converts internal step types to API-accepted types.
-func mapStepType(t string) string {
-	switch t {
-	case "integration":
-		// Integrations are treated as modules by the API
-		return "module"
-	case "primitive":
-		// Primitives are treated as utilities by the API
-		return "utility"
-	case "module", "utility", "llm":
-		return t
-	default:
-		return "module"
 	}
 }
 
@@ -385,23 +370,30 @@ type ValidationResult struct {
 	Errors []ValidationError `json:"errors,omitempty"`
 }
 
-// ValidateWorkflow validates a workflow definition.
-func (c *Client) ValidateWorkflow(wf *Workflow) (*ValidationResult, error) {
-	body, err := json.Marshal(wf)
+// ValidateWorkflow validates a workflow using dry_run mode on the create/update endpoints.
+// For new workflows, uses POST /workflows?dry_run=true.
+// For existing workflows, uses PUT /workflows/{name}?dry_run=true.
+func (c *Client) ValidateWorkflow(wf *Workflow, originalName string) (*ValidationResult, error) {
+	req := wf.toRequest()
+	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode workflow: %w", err)
 	}
 
-	resp, err := c.post("/workflows/builder/validate", bytes.NewReader(body))
+	var resp *http.Response
+	if originalName == "" {
+		// New workflow
+		resp, err = c.post("/workflows?dry_run=true", bytes.NewReader(body))
+	} else {
+		// Existing workflow
+		resp, err = c.put("/workflows/"+originalName+"?dry_run=true", bytes.NewReader(body))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("cannot connect to server: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, parseError(resp)
-	}
-
+	// Both 200 (valid) and 400 (invalid) return a ValidationResult
 	var result ValidationResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("invalid response from server: %w", err)

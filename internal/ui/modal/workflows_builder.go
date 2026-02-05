@@ -22,6 +22,7 @@ const (
 	builderViewFieldPicker
 	builderViewTriggerForm
 	builderViewValidation
+	builderViewHelp
 )
 
 // Focus field constants
@@ -82,6 +83,14 @@ type WorkflowBuilder struct {
 	Dirty   bool
 	Error   string
 	Loading bool
+
+	// Validation state
+	validationResult  *client.ValidationResult
+	validationLoading bool
+	pendingSave       bool // true if validation was triggered by save attempt
+
+	// Close confirmation
+	showCloseConfirm bool
 
 	// Dimensions
 	width  int
@@ -227,6 +236,32 @@ func (b *WorkflowBuilder) Update(msg tea.Msg) (*WorkflowBuilder, tea.Cmd) {
 		}
 		return b, nil
 
+	case WorkflowValidatedMsg:
+		b.validationLoading = false
+		if msg.Error != nil {
+			b.Error = msg.Error.Error()
+			b.pendingSave = false
+			return b, nil
+		}
+		b.validationResult = &client.ValidationResult{
+			Valid:  msg.Valid,
+			Errors: msg.Errors,
+		}
+
+		// If this was a save attempt and valid, proceed with save
+		if b.pendingSave && msg.Valid {
+			b.pendingSave = false
+			return b, b.doSave()
+		} else if b.pendingSave && !msg.Valid {
+			// Show validation view with errors
+			b.viewState = builderViewValidation
+			b.pendingSave = false
+		} else {
+			// Manual validation request - show results
+			b.viewState = builderViewValidation
+		}
+		return b, nil
+
 	case components.TreeCancelledMsg:
 		// Tool picker cancelled - remove the placeholder step and go back to list
 		if b.viewState == builderViewToolPicker {
@@ -303,6 +338,11 @@ func (b *WorkflowBuilder) Update(msg tea.Msg) (*WorkflowBuilder, tea.Cmd) {
 }
 
 func (b *WorkflowBuilder) handleKeyPress(msg tea.KeyMsg) (*WorkflowBuilder, tea.Cmd) {
+	// Handle close confirmation dialog
+	if b.showCloseConfirm {
+		return b.handleCloseConfirm(msg)
+	}
+
 	// Handle name editing mode
 	if b.editingName {
 		return b.handleNameInput(msg)
@@ -311,6 +351,27 @@ func (b *WorkflowBuilder) handleKeyPress(msg tea.KeyMsg) (*WorkflowBuilder, tea.
 	// Handle output selection mode
 	if b.editingOutput {
 		return b.handleOutputSelect(msg)
+	}
+
+	// Handle help view
+	if b.viewState == builderViewHelp {
+		// Any key closes help
+		b.viewState = builderViewList
+		return b, nil
+	}
+
+	// Handle validation view
+	if b.viewState == builderViewValidation {
+		switch msg.String() {
+		case "esc":
+			b.viewState = builderViewList
+		case "s", "ctrl+s":
+			// Try save again if valid
+			if b.validationResult != nil && b.validationResult.Valid {
+				return b, b.doSave()
+			}
+		}
+		return b, nil
 	}
 
 	// For now, only handle list view. Other views will be added in later phases.
@@ -338,8 +399,11 @@ func (b *WorkflowBuilder) handleKeyPress(msg tea.KeyMsg) (*WorkflowBuilder, tea.
 	// Enter to edit/select
 	case "e", "enter":
 		if b.focusedField == focusName {
-			b.editingName = true
-			b.nameInput = b.Name
+			if b.IsNew {
+				b.editingName = true
+				b.nameInput = b.Name
+			}
+			// Name is not editable for existing workflows (it's the identifier)
 		} else if b.focusedField == focusOutput {
 			b.editingOutput = true
 			b.outputOptions = b.buildOutputOptions()
@@ -364,15 +428,47 @@ func (b *WorkflowBuilder) handleKeyPress(msg tea.KeyMsg) (*WorkflowBuilder, tea.
 			return b.deleteStep(b.SelectedStep)
 		}
 
+	// Validate
+	case "v":
+		return b.validateWorkflow()
+
+	// Help
+	case "?":
+		b.viewState = builderViewHelp
+
 	// Save
 	case "ctrl+s":
 		return b.saveWorkflow()
 
 	// Close
 	case "esc", "q":
-		return nil, nil
+		return b.handleClose()
 	}
 
+	return b, nil
+}
+
+func (b *WorkflowBuilder) handleClose() (*WorkflowBuilder, tea.Cmd) {
+	if b.Dirty {
+		b.showCloseConfirm = true
+		return b, nil
+	}
+	return nil, nil // Close without confirmation
+}
+
+func (b *WorkflowBuilder) handleCloseConfirm(msg tea.KeyMsg) (*WorkflowBuilder, tea.Cmd) {
+	switch msg.String() {
+	case "y":
+		// Discard and close
+		return nil, nil
+	case "n", "esc":
+		// Cancel - keep editing
+		b.showCloseConfirm = false
+	case "s":
+		// Save and close
+		b.showCloseConfirm = false
+		return b.saveWorkflow()
+	}
 	return b, nil
 }
 
@@ -737,6 +833,31 @@ func (b *WorkflowBuilder) deleteStep(index int) (*WorkflowBuilder, tea.Cmd) {
 	return b, nil
 }
 
+func (b *WorkflowBuilder) validateWorkflow() (*WorkflowBuilder, tea.Cmd) {
+	// Basic local validation
+	if b.Name == "" {
+		b.Error = "Workflow name is required"
+		return b, nil
+	}
+
+	b.validationLoading = true
+	b.validationResult = nil
+	b.Error = ""
+
+	originalName := b.OriginalName
+	return b, func() tea.Msg {
+		wf := b.ToWorkflow()
+		result, err := b.client.ValidateWorkflow(wf, originalName)
+		if err != nil {
+			return WorkflowValidatedMsg{Error: err}
+		}
+		return WorkflowValidatedMsg{
+			Valid:  result.Valid,
+			Errors: result.Errors,
+		}
+	}
+}
+
 func (b *WorkflowBuilder) saveWorkflow() (*WorkflowBuilder, tea.Cmd) {
 	// Basic validation
 	if b.Name == "" {
@@ -744,9 +865,24 @@ func (b *WorkflowBuilder) saveWorkflow() (*WorkflowBuilder, tea.Cmd) {
 		return b, nil
 	}
 
-	b.Loading = true
+	// Validate before save
+	b.validationLoading = true
+	b.validationResult = nil
+	b.pendingSave = true
 	b.Error = ""
-	return b, b.doSave()
+
+	originalName := b.OriginalName
+	return b, func() tea.Msg {
+		wf := b.ToWorkflow()
+		result, err := b.client.ValidateWorkflow(wf, originalName)
+		if err != nil {
+			return WorkflowValidatedMsg{Error: err}
+		}
+		return WorkflowValidatedMsg{
+			Valid:  result.Valid,
+			Errors: result.Errors,
+		}
+	}
 }
 
 func (b *WorkflowBuilder) doSave() tea.Cmd {
@@ -805,6 +941,11 @@ func (b *WorkflowBuilder) findOutputIndex() int {
 
 // View renders the builder.
 func (b *WorkflowBuilder) View() string {
+	// Show close confirmation overlay if active
+	if b.showCloseConfirm {
+		return b.renderCloseConfirm()
+	}
+
 	switch b.viewState {
 	case builderViewList:
 		return b.renderStepList()
@@ -823,6 +964,10 @@ func (b *WorkflowBuilder) View() string {
 			return b.scheduleForm.View()
 		}
 		return b.renderPlaceholder("Trigger Settings", "Configure workflow trigger", "[Esc] Back")
+	case builderViewValidation:
+		return b.renderValidation()
+	case builderViewHelp:
+		return b.renderHelp()
 	default:
 		return b.renderStepList()
 	}
@@ -878,7 +1023,11 @@ func (b *WorkflowBuilder) renderStepList() string {
 			nameValue = "(required)"
 		}
 		if b.focusedField == focusName {
-			lines = append(lines, labelStyle.Render(nameLabel)+selectedStyle.Render(nameValue)+" "+dimStyle.Render("[Enter to edit]"))
+			hint := "[Enter to edit]"
+			if !b.IsNew {
+				hint = "(read-only)"
+			}
+			lines = append(lines, labelStyle.Render(nameLabel)+selectedStyle.Render(nameValue)+" "+dimStyle.Render(hint))
 		} else {
 			lines = append(lines, labelStyle.Render(nameLabel)+nameValue)
 		}
@@ -971,11 +1120,14 @@ func (b *WorkflowBuilder) renderHints(dimStyle, warningStyle lipgloss.Style) str
 		hints = append(hints, "[Enter]select")
 	}
 
-	hints = append(hints, "[Ctrl+s]save", "[Esc]cancel")
+	hints = append(hints, "[v]alidate", "[Ctrl+s]save", "[?]help")
 
 	hintStr := dimStyle.Render(strings.Join(hints, "  "))
 	if b.Dirty {
 		hintStr += " " + warningStyle.Render("(unsaved)")
+	}
+	if b.validationLoading {
+		hintStr += " " + dimStyle.Render("(validating...)")
 	}
 	return hintStr
 }
@@ -1007,6 +1159,7 @@ func (b *WorkflowBuilder) formatStepLine(index int, step client.WorkflowStep) st
 	selectedStyle := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
 	normalStyle := lipgloss.NewStyle().Foreground(theme.TextPrimary)
 	dimStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+	errorStyle := lipgloss.NewStyle().Foreground(theme.Error)
 
 	isSelected := b.focusedField == focusSteps+index
 
@@ -1053,18 +1206,37 @@ func (b *WorkflowBuilder) formatStepLine(index int, step client.WorkflowStep) st
 		saveAs = " → $" + step.SaveAs
 	}
 
+	// Error indicator for steps with validation errors
+	errorIndicator := ""
+	if b.hasStepValidationError(index) {
+		errorIndicator = " " + errorStyle.Render("!")
+	}
+
 	// Format the line
 	line := fmt.Sprintf("%s%d. %-*s  %-11s  %-*s%s",
 		prefix, index+1, maxNameLen, name, typeStr, maxTargetLen, target, saveAs)
 
 	if isSelected {
-		return selectedStyle.Render(line)
+		return selectedStyle.Render(line) + errorIndicator
 	}
 
 	// Dim the metadata parts for unselected rows
 	namePart := fmt.Sprintf("%s%d. %-*s", prefix, index+1, maxNameLen, name)
 	metaPart := fmt.Sprintf("  %-11s  %-*s%s", typeStr, maxTargetLen, target, saveAs)
-	return normalStyle.Render(namePart) + dimStyle.Render(metaPart)
+	return normalStyle.Render(namePart) + dimStyle.Render(metaPart) + errorIndicator
+}
+
+// hasStepValidationError returns true if the step has validation errors.
+func (b *WorkflowBuilder) hasStepValidationError(stepIndex int) bool {
+	if b.validationResult == nil || b.validationResult.Valid {
+		return false
+	}
+	for _, err := range b.validationResult.Errors {
+		if err.Step != nil && *err.Step == stepIndex {
+			return true
+		}
+	}
+	return false
 }
 
 // AvailableVariables returns variables defined by steps before the given index.
@@ -1076,4 +1248,139 @@ func (b *WorkflowBuilder) AvailableVariables(beforeIndex int) []string {
 		}
 	}
 	return vars
+}
+
+// renderValidation renders the validation results view.
+func (b *WorkflowBuilder) renderValidation() string {
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.Accent)
+	dimStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+	successStyle := lipgloss.NewStyle().Foreground(theme.Success)
+	errorStyle := lipgloss.NewStyle().Foreground(theme.Error)
+
+	var lines []string
+
+	lines = append(lines, headerStyle.Render("Workflow Validation"))
+	lines = append(lines, "")
+
+	if b.validationLoading {
+		lines = append(lines, dimStyle.Render("Validating..."))
+		return strings.Join(lines, "\n")
+	}
+
+	if b.validationResult == nil {
+		lines = append(lines, dimStyle.Render("Press [v] to validate"))
+		return strings.Join(lines, "\n")
+	}
+
+	if b.validationResult.Valid {
+		lines = append(lines, successStyle.Render("✓ Workflow is valid"))
+		lines = append(lines, "")
+		lines = append(lines, dimStyle.Render("[s] Save  [Esc] Continue editing"))
+	} else {
+		lines = append(lines, errorStyle.Render("✗ Validation failed"))
+		lines = append(lines, "")
+
+		// Group errors by step
+		var workflowErrors []client.ValidationError
+		stepErrors := make(map[int][]client.ValidationError)
+
+		for _, err := range b.validationResult.Errors {
+			if err.Step == nil {
+				workflowErrors = append(workflowErrors, err)
+			} else {
+				stepErrors[*err.Step] = append(stepErrors[*err.Step], err)
+			}
+		}
+
+		// Workflow-level errors
+		if len(workflowErrors) > 0 {
+			lines = append(lines, "Workflow:")
+			for _, err := range workflowErrors {
+				msg := err.Message
+				if err.Field != "" {
+					msg = err.Field + ": " + msg
+				}
+				lines = append(lines, "  • "+msg)
+			}
+			lines = append(lines, "")
+		}
+
+		// Step errors
+		for stepIdx, errors := range stepErrors {
+			stepName := fmt.Sprintf("Step %d", stepIdx+1)
+			if stepIdx < len(b.Steps) && b.Steps[stepIdx].Name != "" {
+				stepName = b.Steps[stepIdx].Name
+			}
+			lines = append(lines, stepName+":")
+			for _, err := range errors {
+				msg := err.Message
+				if err.Field != "" {
+					msg = err.Field + ": " + msg
+				}
+				lines = append(lines, "  • "+msg)
+			}
+			lines = append(lines, "")
+		}
+
+		lines = append(lines, dimStyle.Render("[Esc] Continue editing"))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// renderHelp renders the help overlay.
+func (b *WorkflowBuilder) renderHelp() string {
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.Accent)
+	dimStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+	labelStyle := lipgloss.NewStyle().Foreground(theme.TextPrimary).Width(12)
+
+	var lines []string
+
+	lines = append(lines, headerStyle.Render("Workflow Builder Help"))
+	lines = append(lines, "")
+
+	lines = append(lines, dimStyle.Render("Navigation:"))
+	lines = append(lines, labelStyle.Render("  j/k")+"  Move selection up/down")
+	lines = append(lines, labelStyle.Render("  J/K")+"  Move step up/down (reorder)")
+	lines = append(lines, labelStyle.Render("  Enter")+"  Edit selected item")
+	lines = append(lines, labelStyle.Render("  Esc")+"  Go back / Cancel")
+	lines = append(lines, "")
+
+	lines = append(lines, dimStyle.Render("Actions:"))
+	lines = append(lines, labelStyle.Render("  e")+"  Edit selected step")
+	lines = append(lines, labelStyle.Render("  d")+"  Delete selected step")
+	lines = append(lines, labelStyle.Render("  v")+"  Validate workflow")
+	lines = append(lines, labelStyle.Render("  Ctrl+s")+"  Save workflow")
+	lines = append(lines, "")
+
+	lines = append(lines, dimStyle.Render("In Step Editor:"))
+	lines = append(lines, labelStyle.Render("  t")+"  Test step")
+	lines = append(lines, labelStyle.Render("  v")+"  Pick variable from previous step")
+	lines = append(lines, labelStyle.Render("  a")+"  Add array item (on array fields)")
+	lines = append(lines, labelStyle.Render("  d")+"  Remove array item")
+	lines = append(lines, "")
+
+	lines = append(lines, dimStyle.Render("Press any key to close help"))
+
+	return strings.Join(lines, "\n")
+}
+
+// renderCloseConfirm renders the close confirmation dialog.
+func (b *WorkflowBuilder) renderCloseConfirm() string {
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.Warning)
+	dimStyle := lipgloss.NewStyle().Foreground(theme.TextSecondary)
+
+	var lines []string
+
+	lines = append(lines, headerStyle.Render("Unsaved Changes"))
+	lines = append(lines, "")
+	lines = append(lines, "You have unsaved changes.")
+	lines = append(lines, "")
+	lines = append(lines, "[y] Discard and close")
+	lines = append(lines, "[n] Cancel and keep editing")
+	lines = append(lines, "[s] Save and close")
+	lines = append(lines, "")
+	lines = append(lines, dimStyle.Render("Press y, n, or s"))
+
+	return strings.Join(lines, "\n")
 }
